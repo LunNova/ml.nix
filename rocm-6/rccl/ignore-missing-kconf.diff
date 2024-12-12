@@ -1,0 +1,22 @@
+diff --git a/src/misc/rocmwrap.cc b/src/misc/rocmwrap.cc
+index b3063d5..110be6c 100644
+--- a/src/misc/rocmwrap.cc
++++ b/src/misc/rocmwrap.cc
+@@ -131,7 +131,8 @@ static void initOnceFunc() {
+       //format and store the kernel conf file location
+       snprintf(kernel_conf_file, sizeof(kernel_conf_file), "/boot/config-%s", utsname.release);
+       fp = fopen(kernel_conf_file, "r");
+-      if (fp == NULL) INFO(NCCL_INIT,"Could not open kernel conf file");
++      if (fp == NULL) INFO(NCCL_INIT,"Could not open kernel conf file, will assume CONFIG_DMABUF_MOVE_NOTIFY and CONFIG_PCI_P2PDMA are enabled");
++      else {
+       //look for kernel_opt1 and kernel_opt2 in the conf file and check
+       while (fgets(buf, sizeof(buf), fp) != NULL) {
+         if (strstr(buf, kernel_opt1) != NULL) {
+@@ -148,6 +149,7 @@ static void initOnceFunc() {
+         INFO(NCCL_INIT, "CONFIG_DMABUF_MOVE_NOTIFY and CONFIG_PCI_P2PDMA should be set for DMA_BUF in /boot/config-%s", utsname.release);
+         INFO(NCCL_INIT, "DMA_BUF_SUPPORT Failed due to OS kernel support");
+       }
++      }
+ 
+       if(dmaBufSupport) INFO(NCCL_INIT, "DMA_BUF Support Enabled");
+       else goto error;
