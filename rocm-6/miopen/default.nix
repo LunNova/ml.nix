@@ -12,10 +12,10 @@
 , rocrand
 , rocm-runtime
 , rocm-merged-llvm
+, hipblas-common
+, hipblas
 , hipblaslt
 , clr
-, clang-tools-extra
-, clang-ocl
 , composable_kernel
 , frugally-deep
 , rocm-docs-core
@@ -38,14 +38,14 @@
 }:
 
 let
-  cFlags = "-I${roctracer}/include -I${nlohmann_json}/include -I${sqlite.dev}/include"; # FIXME: cmake files need patched to include this properly
-  version = "6.2.2";
+  cFlags = "--offload-compress -I${roctracer}/include -I${nlohmann_json}/include -I${sqlite.dev}/include"; # FIXME: cmake files need patched to include this properly
+  version = "6.3.0";
 
   src = fetchFromGitHub {
     owner = "ROCm";
     repo = "MIOpen";
     rev = "rocm-${version}";
-    hash = "sha256-PaKKRptEFSudGrR7s0/2BEMEUDfdrPFgfcX61Jf6yiY=";
+    hash = "sha256-gfZG7r2BxW/4O7iPa6UWy2+5ikXUjuVU6nLmr1V/Qgc=";
     fetchLFS = true;
     fetchSubmodules = true;
 
@@ -113,6 +113,7 @@ stdenv.mkDerivation (finalAttrs: {
       '-DCMAKE_C_FLAGS_RELEASE=${cFlags}'
       '-DCMAKE_CXX_FLAGS_RELEASE=${cFlags}'
     )
+    makeFlagsArray+=("-l$((NIX_BUILD_CORES / 2))")
   '';
   # Find zstd and add to target. Mainly for torch.
   patches = [
@@ -149,13 +150,13 @@ stdenv.mkDerivation (finalAttrs: {
     cmake
     rocm-cmake
     clr
-    clang-tools-extra
   ];
 
   buildInputs = [
+    hipblas
+    hipblas-common
     rocblas
     rocmlir
-    clang-ocl
     composable_kernel
     half
     boost
@@ -180,6 +181,9 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   cmakeFlags = [
+    "-DAMDGPU_TARGETS=${lib.concatStringsSep ";" clr.gpuTargets}"
+    "-DGPU_TARGETS=${lib.concatStringsSep ";" clr.gpuTargets}"
+    "-DGPU_ARCHS=${lib.concatStringsSep ";" clr.gpuTargets}"
     "-DMIOPEN_USE_SQLITE_PERFDB=ON"
     "-DCMAKE_VERBOSE_MAKEFILE=ON"
     "-DCMAKE_MODULE_PATH=${clr}/hip/cmake"
@@ -189,12 +193,15 @@ stdenv.mkDerivation (finalAttrs: {
     "-DUNZIPPER=${bzip2}/bin/bzcat" # needs to stream to stdout so bzcat not bunzip2
 
     # isnan not defined for float error, probably still needs hipcc? should try without hipcc again next bump
-    "-DCMAKE_C_COMPILER=hipcc"
-    "-DCMAKE_CXX_COMPILER=hipcc"
+    # "-DCMAKE_C_COMPILER=hipcc"
+    # "-DCMAKE_CXX_COMPILER=hipcc"
     "-DROCM_PATH=${clr}"
     "-DHIP_ROOT_DIR=${clr}"
-    (lib.cmakeBool "MIOPEN_USE_ROCBLAS" false)
+    (lib.cmakeBool "MIOPEN_USE_ROCBLAS" true)
     (lib.cmakeBool "MIOPEN_USE_HIPBLASLT" true)
+    (lib.cmakeBool "MIOPEN_USE_COMPOSABLEKERNEL" true)
+    (lib.cmakeBool "MIOPEN_USE_HIPRTC" true)
+    (lib.cmakeBool "MIOPEN_USE_COMGR" true)
     "-DCMAKE_HIP_COMPILER_ROCM_ROOT=${clr}"
     # Manually define CMAKE_INSTALL_<DIR>
     # See: https://github.com/NixOS/nixpkgs/pull/197838
@@ -208,11 +215,6 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   postPatch = ''
-    substituteInPlace driver/sum_driver.hpp \
-      --replace-fail " isnan(" " std::isnan("
-    # cat driver/sum_driver.hpp
-    # exit 1
-
     patchShebangs test src/composable_kernel fin utils install_deps.cmake
 
       #--replace "unpack_db(\"\''${CMAKE_SOURCE_DIR}/src/kernels/\''${FILE_NAME}.kdb.bz2\")" "" \

@@ -7,7 +7,6 @@
 , ninja
 , xxd
 , rocm-device-libs
-, rocm-thunk
 , elfutils
 , libdrm
 , numactl
@@ -18,18 +17,19 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocm-runtime";
-  version = "6.2.2";
+  version = "6.3.0";
 
   src = fetchFromGitHub {
     owner = "ROCm";
     repo = "ROCR-Runtime";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-VRPwUWCnUunEADaCQIbYEDSbRNdK2e3Om/ee7Hsv3TY=";
+    hash = "sha256-wgm0yfdTehlJ4KnN6xI+TKj/G85Wa3tgnx/9leL3goo=";
     # rev = "816af44b05a00d3063d8a7745865b359a5fba238";
     # hash = "sha256-8XsoSOndH59M2f+f29yiKabostkV96jZDwdg2aqI/xg=";
   };
 
-  sourceRoot = "${finalAttrs.src.name}/src";
+  env.CFLAGS = "-I${numactl.dev}/include -I${elfutils.dev}/include -w";
+  env.CXXFLAGS = "-I${numactl.dev}/include -I${elfutils.dev}/include -w";
 
   nativeBuildInputs = [
     pkg-config
@@ -40,7 +40,6 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   buildInputs = [
-    rocm-thunk
     elfutils
     libdrm
     numactl

@@ -38,9 +38,11 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
   cmakeFlags = [
     "-DCMAKE_VERBOSE_MAKEFILE=ON"
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
     "-DLLVM_TARGETS_TO_BUILD=AMDGPU;${llvmNativeTarget}"
   ];
 

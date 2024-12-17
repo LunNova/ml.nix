@@ -65,22 +65,6 @@ in
   pname = "aotriton";
   version = "unstable-20241122";
 
-  # hipblaslt-unstable> # Writing Custom CMake
-  # hipblaslt-unstable> Traceback (most recent call last):
-  # hipblaslt-unstable>   File "/nix/store/mdd1rbwjc0p5jmbw9gvjr22sh7wdi74w-python3.12-tensilelite-6.2.2/lib/python3.12/site-packages/Tensile/bin/TensileCreateLibrary", line 43, in <module>
-  # hipblaslt-unstable>     TensileCreateLibrary()
-  # hipblaslt-unstable>   File "/nix/store/mdd1rbwjc0p5jmbw9gvjr22sh7wdi74w-python3.12-tensilelite-6.2.2/lib/python3.12/site-packages/Tensile/TensileCreateLibrary.py", line 60, in wrapper
-  # hipblaslt-unstable>     res = func(*args, **kwargs)
-  # hipblaslt-unstable>           ^^^^^^^^^^^^^^^^^^^^^
-  # hipblaslt-unstable>   File "/nix/store/mdd1rbwjc0p5jmbw9gvjr22sh7wdi74w-python3.12-tensilelite-6.2.2/lib/python3.12/site-packages/Tensile/TensileCreateLibrary.py", line 1421, in TensileCreateLibrary
-  # hipblaslt-unstable>     shutil.copy( os.path.join(globalParameters["SourcePath"], fileName), \
-  # hipblaslt-unstable>   File "/nix/store/px2nj16i5gc3d4mnw5l1nclfdxhry61p-python3-3.12.7/lib/python3.12/shutil.py", line 435, in copy
-  # hipblaslt-unstable>     copyfile(src, dst, follow_symlinks=follow_symlinks)
-  # hipblaslt-unstable>   File "/nix/store/px2nj16i5gc3d4mnw5l1nclfdxhry61p-python3-3.12.7/lib/python3.12/shutil.py", line 262, in copyfile
-  # hipblaslt-unstable>     with open(dst, 'wb') as fdst:
-  # hipblaslt-unstable>          ^^^^^^^^^^^^^^^
-
-
   src = fetchFromGitHub {
     owner = "ROCm";
     repo = "aotriton";
@@ -88,19 +72,11 @@ in
     hash = "sha256-C5Qr0EgV+pU6Hnmxqy76Nmryqr7qNkoE6iDcg9z35Hk=";
     fetchSubmodules = true;
   };
-  # env.CFLAGS = "-fsanitize=undefined";
   env.CXX = compiler;
-  # env.CCC_OVERRIDE_OPTIONS = "+${cFlags}"; # HACK
-  # env.CXXFLAGS = "-fsanitize=undefined";
-  # env.CMAKE_CXX_COMPILER = "hipcc"; # used by Tensile
   env.ROCM_PATH = "${clr}";
   env.NIX_CC_USE_RESPONSE_FILE = 0;
   env.NIX_DISABLE_WRAPPER_INCLUDES = 1;
-  #enableParallelBuilding = false;
   requiredSystemFeatures = [ "big-parallel" ];
-
-  patches = [
-  ];
 
   outputs = [
     "out"

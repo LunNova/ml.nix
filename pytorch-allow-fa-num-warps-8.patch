@@ -1,0 +1,41 @@
+From 1ae3479e42a2f52ef07410b16d963ccdae8b62f7 Mon Sep 17 00:00:00 2001
+From: drisspg <drisspguessous@gmail.com>
+Date: Mon, 16 Dec 2024 09:15:07 -0800
+Subject: [PATCH] Update
+
+[ghstack-poisoned]
+---
+ test/inductor/test_flex_attention.py     | 5 +++++
+ torch/_inductor/kernel/flex_attention.py | 3 ---
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/test/inductor/test_flex_attention.py b/test/inductor/test_flex_attention.py
+index 282828cda42ead..acb6340d04c938 100644
+--- a/test/inductor/test_flex_attention.py
++++ b/test/inductor/test_flex_attention.py
+@@ -3286,6 +3286,11 @@ def apply_multiplicative_bias(score, b, h, q_idx, kv_idx):
+ 
+         self.run_test_with_call(attention, Q_S=Q_S, KV_S=KV_S)
+ 
++    @supported_platform
++    def test_num_warps_8_error(self):
++        attention = functools.partial(flex_attention, score_mod=_identity)
++        self.run_test_with_call(attention, Q_S=128, KV_S=128, Q_D=128, V_D=128)
++
+     @unittest.skipIf(not TEST_MULTIGPU, "detected only one GPU")
+     def test_qkv_and_block_mask_on_the_same_device(self):
+         make_tensor = functools.partial(
+diff --git a/torch/_inductor/kernel/flex_attention.py b/torch/_inductor/kernel/flex_attention.py
+index 1a64d2a89ef8b1..4220d4d215b1cb 100644
+--- a/torch/_inductor/kernel/flex_attention.py
++++ b/torch/_inductor/kernel/flex_attention.py
+@@ -2310,9 +2310,6 @@ def flex_attention_backward(*args, **kwargs):
+             or SPARSE_Q_BLOCK_SIZE % BLOCK2 != 0
+         ):
+             continue
+-        if num_warps == 8:
+-            # Working around https://github.com/pytorch/pytorch/issues/141603
+-            continue
+ 
+         # Performance tuning
+         cur_kernel_options = original_kernel_options.copy()

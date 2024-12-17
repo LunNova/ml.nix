@@ -1,0 +1,116 @@
+diff --git a/src/include/bootstrap.h b/src/include/bootstrap.h
+index 8c5f081..4394452 100644
+--- a/src/include/bootstrap.h
++++ b/src/include/bootstrap.h
+@@ -10,11 +10,13 @@
+ #include "nccl.h"
+ #include "comm.h"
+ 
+-struct ncclBootstrapHandle {
++// this is accessed through unaligned ptrs because 
++struct __attribute__((packed)) ncclBootstrapHandle {
+   uint64_t magic;
+   union ncclSocketAddress addr;
+ };
+ static_assert(sizeof(struct ncclBootstrapHandle) <= sizeof(ncclUniqueId), "Bootstrap handle is too large to fit inside NCCL unique ID");
++static_assert(alignof(struct ncclBootstrapHandle) == alignof(ncclUniqueId), "Bootstrap handle must have same alignment as NCCL unique ID to avoid UB");
+ 
+ ncclResult_t bootstrapNetInit();
+ ncclResult_t bootstrapCreateRoot(struct ncclBootstrapHandle* handle, bool idFromEnv);
+diff --git a/src/include/socket.h b/src/include/socket.h
+index 60a4138..3338337 100644
+--- a/src/include/socket.h
++++ b/src/include/socket.h
+@@ -24,7 +24,7 @@
+ #define NCCL_SOCKET_MAGIC 0x564ab9f2fc4b9d6cULL
+ 
+ /* Common socket address storage structure for IPv4/IPv6 */
+-union ncclSocketAddress {
++union __attribute__((packed)) ncclSocketAddress {
+   struct sockaddr sa;
+   struct sockaddr_in sin;
+   struct sockaddr_in6 sin6;
+diff --git a/src/init.cc b/src/init.cc
+index 738f756..1399700 100644
+--- a/src/init.cc
++++ b/src/init.cc
+@@ -2428,7 +2428,7 @@ ncclResult_t ncclCommInitAll_impl(ncclComm_t* comms, int ndev, const int* devlis
+   NCCLCHECKGOTO(ncclGroupEnd(), ret, fail);
+ 
+ fail:
+-  free(gpuFlags);
++  if (gpuFlags) free(gpuFlags);
+   return ret;
+ }
+ 
+diff --git a/src/transport/net_ib.cc b/src/transport/net_ib.cc
+index 6d77784..49762d3 100644
+--- a/src/transport/net_ib.cc
++++ b/src/transport/net_ib.cc
+@@ -573,7 +573,7 @@ ncclResult_t ncclIbGdrSupport() {
+     // Requires support from NIC driver modules
+     // Use ONLY for debugging!
+     moduleLoaded = 1;
+-    INFO(NCCL_INIT, "RCCL_FORCE_ENABLE_GDRDMA = 1, so explicitly setting moduleLoaded = 1");
++    INFO(NCCL_INIT, "ncclIbGdrSupport: RCCL_FORCE_ENABLE_GDRDMA = 1, so explicitly setting moduleLoaded = 1");
+   }
+ 
+   if (moduleLoaded == -1) {
+@@ -586,13 +586,14 @@ ncclResult_t ncclIbGdrSupport() {
+     // or created under a different path like `/sys/kernel/` or `/sys/` (depending on your ib_peer_mem module)
+     const char* memory_peers_paths[] = {"/sys/kernel/mm/memory_peers/amdkfd/version",
+                                   "/sys/kernel/memory_peers/amdkfd/version",
+-                                  "/sys/memory_peers/amdkfd/version"};
++                                  "/sys/memory_peers/amdkfd/version",
++                                  NULL};
+     int i = 0;
+ 
+     while (memory_peers_paths[i]) {
+       if (access(memory_peers_paths[i], F_OK) == 0) {
+         moduleLoaded = 1;
+-        INFO(NCCL_INIT,"Found %s", memory_peers_paths[i]);
++        INFO(NCCL_INIT,"ncclIbGdrSupport: Found %s", memory_peers_paths[i]);
+         break;
+       } else {
+         moduleLoaded = 0;
+@@ -612,22 +613,23 @@ ncclResult_t ncclIbGdrSupport() {
+     if (moduleLoaded == 0) {
+       // Check for `ib_register_peer_memory_client` symbol in `/proc/kallsyms`
+       // if your system uses native OS ib_peer module
+-      char buf[256];
+-      FILE *fp = NULL;
+-      fp = fopen("/proc/kallsyms", "r");
++      FILE *fp = fopen("/proc/kallsyms", "r");
++      char *line = NULL;
++      size_t len = 0;
+ 
+       if (fp == NULL) {
+-        INFO(NCCL_INIT,"Could not open /proc/kallsyms");
++        INFO(NCCL_INIT,"ncclIbGdrSupport: Could not open /proc/kallsyms to check for ib_register_peer_memory_client");
+       } else {
+-        while (fgets(buf, sizeof(buf), fp) != NULL) {
+-          if (strstr(buf, "t ib_register_peer_memory_client") != NULL ||
+-              strstr(buf, "T ib_register_peer_memory_client") != NULL) {
++        while (getline(&line, &len, fp) > 0) {
++          if (line && strstr(line, "ib_register_peer_memory_client") != NULL) {
+             moduleLoaded = 1;
+-            INFO(NCCL_INIT,"Found ib_register_peer_memory_client in /proc/kallsyms");
++            INFO(NCCL_INIT,"ncclIbGdrSupport: Found ib_register_peer_memory_client in /proc/kallsyms");
+             break;
+           }
+         }
+       }
++      if (line) free(line);
++      if (fp) fclose(fp);
+     }
+ #else
+     // Check for the nv_peer_mem module being loaded
+@@ -637,7 +639,7 @@ ncclResult_t ncclIbGdrSupport() {
+ #endif
+   }
+   if (moduleLoaded == 0) {
+-    INFO(NCCL_INIT,"GDRDMA not enabled. Could not find memory_peers directory or peer_memory symbol");
++    INFO(NCCL_INIT,"ncclIbGdrSupport: GDRDMA not enabled. Could not find memory_peers directory or peer_memory symbol");
+     return ncclSystemError;
+   }
+   return ncclSuccess;

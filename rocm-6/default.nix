@@ -10,32 +10,26 @@
 , libjpeg_turbo
 , python3Packages
 , libffi
+, emptyDirectory
 }:
 
 lib.makeScope newScope (self:
 let
   pyPackages = python3Packages;
   libffiorig = libffi;
-  # let python = (python311Packages.python.override {
-  #               self = python;
-  #               }).overrideAttrs {
-  #                 dontStrip = true; };
 in
 with self; {
   buildTests = false;
   buildBenchmarks = false;
-  # python = python;
-  # python3 = python;
-  # pythonPackages = python.pkgs;
-  # python3Packages = python.pkgs;
 
   libffi = (libffiorig.override {
     stdenv = self.llvm.rocmClangStdenv;
   }).overrideAttrs (old: {
     dontStrip = true;
-    #env.NIX_CFLAGS_COMPILE = "-fsanitize=undefined -w -march=znver1 -mtune=znver1";
+    env.CFLAGS = "-g1 -gz";
+    env.CXXFLAGS = "-g1 -gz";
     cmakeFlags = (old.cmakeFlags or [ ]) ++ [
-      "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+      "-DCMAKE_BUILD_TYPE=Release"
     ];
   });
 
@@ -43,14 +37,16 @@ with self; {
   rocmUpdateScript = callPackage ./update.nix { };
 
   ## ROCm ##
-  llvm = recurseIntoAttrs (callPackage ./llvm/default.nix { inherit rocmUpdateScript rocm-device-libs rocm-runtime rocm-thunk clr; });
+  llvm = recurseIntoAttrs (callPackage ./llvm/default.nix { inherit rocm-device-libs rocm-runtime; });
   inherit (self.llvm) rocm-merged-llvm clang;
 
-  clang-ocl = callPackage ./clang-ocl {
-    stdenv = llvm.rocmClangStdenv;
-  };
+  clang-ocl = builtins.trace "clang-ocl has been deprecated by AMD and removed" emptyDirectory;
 
   rocm-core = callPackage ./rocm-core {
+    stdenv = llvm.rocmClangStdenv;
+  };
+  amdsmi = pyPackages.callPackage ./amdsmi {
+    inherit rocmUpdateScript;
     stdenv = llvm.rocmClangStdenv;
   };
 
@@ -59,10 +55,7 @@ with self; {
     stdenv = llvm.rocmClangStdenv;
   };
 
-  rocm-thunk = callPackage ./rocm-thunk {
-
-    stdenv = llvm.rocmClangStdenv;
-  };
+  rocm-thunk = builtins.trace "rocm-thunk was merged into rocm-runtime in rocm-6.3.0" emptyDirectory;
 
   rocm-smi = pyPackages.callPackage ./rocm-smi {
     inherit rocmUpdateScript;
@@ -77,7 +70,7 @@ with self; {
   };
 
   rocm-runtime = callPackage ./rocm-runtime {
-    inherit rocmUpdateScript rocm-device-libs rocm-thunk;
+    inherit rocmUpdateScript rocm-device-libs;
     inherit (llvm) rocm-merged-llvm;
     stdenv = llvm.rocmClangStdenv;
   };
@@ -140,7 +133,7 @@ with self; {
 
   rocprofiler = callPackage ./rocprofiler {
     stdenv = llvm.rocmClangStdenv;
-    inherit rocmUpdateScript clr rocm-core rocm-thunk rocm-device-libs roctracer rocdbgapi hsa-amd-aqlprofile-bin;
+    inherit rocmUpdateScript clr rocm-core rocm-device-libs roctracer rocdbgapi hsa-amd-aqlprofile-bin;
     inherit (llvm) clang;
   };
   rocprofiler-register = callPackage ./rocprofiler-register {
@@ -198,6 +191,10 @@ with self; {
   rocfft = callPackage ./rocfft {
     inherit rocmUpdateScript rocm-cmake rocrand clr;
     inherit (llvm) openmp;
+    stdenv = llvm.rocmClangStdenv;
+  };
+
+  mscclpp = callPackage ./mscclpp {
     stdenv = llvm.rocmClangStdenv;
   };
 
@@ -314,14 +311,14 @@ with self; {
   #   It is still available for some time as part of rocmPackages_5.
   # ''; # Added 2024-3-3
 
-  # FIXME: we have compressed code objects now, may be able to skip two stages?
-  composable_kernel = callPackage ./composable_kernel/unpack.nix {
-    composable_kernel_build = callPackage ./composable_kernel {
-      inherit rocmUpdateScript rocm-cmake clr;
-      inherit (llvm) rocm-merged-llvm;
-      stdenv = llvm.rocmClangStdenv;
-    };
+  composable_kernel_build = callPackage ./composable_kernel {
+    inherit rocmUpdateScript rocm-cmake clr;
+    inherit (llvm) rocm-merged-llvm;
+    stdenv = llvm.rocmClangStdenv;
   };
+
+  # FIXME: we have compressed code objects now, may be able to skip two stages?
+  composable_kernel = callPackage ./composable_kernel/unpack.nix { };
 
   half = callPackage ./half {
     inherit rocmUpdateScript rocm-cmake;
@@ -330,7 +327,7 @@ with self; {
 
   miopen = callPackage ./miopen {
     inherit rocmUpdateScript rocm-cmake rocblas composable_kernel rocm-comgr clr rocm-docs-core half roctracer;
-    inherit (llvm) clang-tools-extra rocm-merged-llvm;
+    inherit (llvm) rocm-merged-llvm;
     stdenv = llvm.rocmClangStdenv;
     rocmlir = rocmlir-rock;
     boost = boost179.override { enableStatic = true; };
@@ -345,7 +342,7 @@ with self; {
 
   migraphx = callPackage ./migraphx {
     inherit rocmUpdateScript rocm-cmake rocblas composable_kernel miopen clr half rocm-device-libs;
-    inherit (llvm) openmp clang-tools-extra;
+    inherit (llvm) openmp;
     stdenv = llvm.rocmClangStdenv;
     rocmlir = rocmlir-rock;
   };
@@ -528,7 +525,7 @@ with self; {
         rocm-runtime
         clr
         clr.icd
-        rocm-thunk
+        # rocm-thunk
         rocm-opencl-runtime
       ];
     };
@@ -555,7 +552,7 @@ with self; {
         llvm.clang
         llvm.mlir
         llvm.openmp
-        rocm-thunk
+        # rocm-thunk
         rocm-runtime
         rocm-hip-runtime
       ];

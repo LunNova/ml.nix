@@ -40,68 +40,28 @@ let
   cFlags = "-I${msgpack}/include"; # FIXME: cmake files need patched to include this properly
 in
 {
+  # build will fail with llvm libcxx, must use gnu libstdcxx
+  # https://github.com/llvm/llvm-project/issues/98734
   pname = "hipblaslt";
-  #version = "unstable-20241122";
   version = "6.3.0";
-
-  # hipblaslt-unstable> # Writing Custom CMake
-  # hipblaslt-unstable> Traceback (most recent call last):
-  # hipblaslt-unstable>   File "/nix/store/mdd1rbwjc0p5jmbw9gvjr22sh7wdi74w-python3.12-tensilelite-6.2.2/lib/python3.12/site-packages/Tensile/bin/TensileCreateLibrary", line 43, in <module>
-  # hipblaslt-unstable>     TensileCreateLibrary()
-  # hipblaslt-unstable>   File "/nix/store/mdd1rbwjc0p5jmbw9gvjr22sh7wdi74w-python3.12-tensilelite-6.2.2/lib/python3.12/site-packages/Tensile/TensileCreateLibrary.py", line 60, in wrapper
-  # hipblaslt-unstable>     res = func(*args, **kwargs)
-  # hipblaslt-unstable>           ^^^^^^^^^^^^^^^^^^^^^
-  # hipblaslt-unstable>   File "/nix/store/mdd1rbwjc0p5jmbw9gvjr22sh7wdi74w-python3.12-tensilelite-6.2.2/lib/python3.12/site-packages/Tensile/TensileCreateLibrary.py", line 1421, in TensileCreateLibrary
-  # hipblaslt-unstable>     shutil.copy( os.path.join(globalParameters["SourcePath"], fileName), \
-  # hipblaslt-unstable>   File "/nix/store/px2nj16i5gc3d4mnw5l1nclfdxhry61p-python3-3.12.7/lib/python3.12/shutil.py", line 435, in copy
-  # hipblaslt-unstable>     copyfile(src, dst, follow_symlinks=follow_symlinks)
-  # hipblaslt-unstable>   File "/nix/store/px2nj16i5gc3d4mnw5l1nclfdxhry61p-python3-3.12.7/lib/python3.12/shutil.py", line 262, in copyfile
-  # hipblaslt-unstable>     with open(dst, 'wb') as fdst:
-  # hipblaslt-unstable>          ^^^^^^^^^^^^^^^
-
 
   src = fetchFromGitHub {
     owner = "ROCm";
     repo = "hipBLASLt";
     rev = "rocm-${finalAttrs.version}";
     hash = "sha256-TTxjFQE53PcDA3Yw31h9j2nXpuB1OnHLOPX+d6K2MS8=";
-    # rev = "93d7ec47fa251daf13db4a87763da1864e64cf82";
-    # hash = "sha256-hOV+vSCBCtoQPi4P30BaaKVj8ES8IJB9F9Fhtvk+t9s=";
-
-    # builds for gfx908!
-    # rev = "7b199d190bd446b8a26f8ca2cab381a711b04fc8";
-    # hash = "sha256-1mWM0geT/rQ95oGNd3ANR+e2GLRVSN55EBAB79/HuP4=";
-
-    # rebased "tested" gfx908 branch before merge, half a year ago
-    # rev = "30aa14836bfebda03c14e6406d3decaf7a8cdb19";
-    # hash = "sha256-Tfs9nI1bBWUgjQd7UUdrVGOHZHpUeVJzr2OOKecTJFE=";
-
-    # rev = "3c44762350b2386f3a0f448cfb732f3eee380f2b";
-    # hash = "sha256-jLUpCTjnDfG05MYE0BYuwk7orELk54MUna46M4MIOXI=";
-    # rev = "rocm-test-09212024"; # ce612a8cb99e2cde4f46b124552e1998b7e8cd96
-    # hash = "sha256-SpkxomxsaFbrIK+PN/hBXx3q0d6mjMDSrKA+vwpON28=";
-    # rev = "6655405569ec47ec8637b743f48713e45f299d8d";
-    # hash = "sha256-5INvDqHO8aVLCu29NIh0WPPYMcIINwoye9bhRqeLXck=";
-    # rev = "e0270657047211d7cc5b7de64252744fd77b5d7a";
-    # hash = "sha256-9ViZdidLq+aEXHNlqmYNhTETIlU5ZgXOqSrQGkyryww=";
   };
-  # env.CFLAGS = "-fsanitize=undefined";
   env.CXX = compiler;
-  # env.CCC_OVERRIDE_OPTIONS = "+${cFlags}"; # HACK
-  # env.CXXFLAGS = "-fsanitize=undefined";
-  # env.CMAKE_CXX_COMPILER = "hipcc"; # used by Tensile
   env.ROCM_PATH = "${clr}";
   env.TENSILE_ROCM_ASSEMBLER_PATH = "${clang-sysrooted}/bin/clang++";
   env.NIX_CC_USE_RESPONSE_FILE = 0;
   env.NIX_DISABLE_WRAPPER_INCLUDES = 1;
   env.TENSILE_GEN_ASSEMBLY_TOOLCHAIN = "${clang-sysrooted}/bin/clang++";
-  # env.NIX_DEBUG = 1;
-  #enableParallelBuilding = false;
   requiredSystemFeatures = [ "big-parallel" ];
 
   patches = [
     ./ext-op-first.diff
-    # ./alpha_1_init_fix.patch # libcxx bug workaround - https://github.com/llvm/llvm-project/issues/98734
+    # ./alpha_1_init_fix.patch # libcxx bug workaround - 
   ];
 
   outputs = [
@@ -153,33 +113,6 @@ in
       exec clang++ "$@"
     '')
   ];
-
-  # FIXME: gen_assembly.sh ignores errors
-  # blaslt> FileNotFoundError: [Errno 2] No such file or directory: '/opt/rocm/llvm/bin/clang++'
-  # hipblaslt> Traceback (most recent call last):
-  # hipblaslt>   File "/nix/store/x3p68s3nkcg9syi9hj5zv9z8v8bv8xyq-python3.12-tensile-6.2.2/lib/python3.12/site-packages/Tensile/Ops/./AMaxGenerator.py", line 851, in <module>
-  # hipblaslt>     ti.Base._global_ti.init(isa, toolchain_path, False)
-  # hipblaslt>   File "/nix/store/x3p68s3nkcg9syi9hj5zv9z8v8bv8xyq-python3.12-tensile-6.2.2/lib/python3.12/site-packages/Tensile/TensileInstructions/Base.py", line 69, in init
-  # hipblaslt>     asmCaps  = _initAsmCaps(isaVersion, assemblerPath, debug)
-  # hipblaslt>                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  # hipblaslt>   File "/nix/store/x3p68s3nkcg9syi9hj5zv9z8v8bv8xyq-python3.12-tensile-6.2.2/lib/python3.12/site-packages/Tensile/TensileInstructions/Base.py", line 234, in _initAsmCaps
-  # hipblaslt>     rv["SupportedISA"]      = _tryAssembler(isaVersion, assemblerPath, "", isDebug)
-  # hipblaslt>                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  # hipblaslt>   File "/nix/store/x3p68s3nkcg9syi9hj5zv9z8v8bv8xyq-python3.12-tensile-6.2.2/lib/python3.12/site-packages/Tensile/TensileInstructions/Base.py", line 212, in _tryAssembler
-  # hipblaslt>     result = subprocess.run(args, input=asmString.encode(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-  # hipblaslt>              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  # hipblaslt>   File "/nix/store/pv8sxpqsv1nl22n9ka0gpp43j3xr1va2-python3-3.12.6/lib/python3.12/subprocess.py", line 548, in run
-  # hipblaslt>     with Popen(*popenargs, **kwargs) as process:
-  # hipblaslt>          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  # hipblaslt>   File "/nix/store/pv8sxpqsv1nl22n9ka0gpp43j3xr1va2-python3-3.12.6/lib/python3.12/subprocess.py", line 1026, in __init__
-  # hipblaslt>     self._execute_child(args, executable, preexec_fn, close_fds,
-  # hipblaslt>   File "/nix/store/pv8sxpqsv1nl22n9ka0gpp43j3xr1va2-python3-3.12.6/lib/python3.12/subprocess.py", line 1955, in _execute_child
-  # hipblaslt>     raise child_exception_type(errno_num, err_msg, err_filename)
-  # hipblaslt> FileNotFoundError: [Errno 2] No such file or directory: '/opt/rocm/llvm/bin/clang++'
-  # hipblaslt> /nix/store/x3p68s3nkcg9syi9hj5zv9z8v8bv8xyq-python3.12-tensile-6.2.2/lib/python3.12/site-packages/Tensile/Source/..//Ops/gen_assembly.sh: line 76: /opt/rocm/llvm/bin/clang++: No such file or directory
-  # hipblaslt> /nix/store/x3p68s3nkncg9syi9hj5zv9z8v8bv8xyq-python3.12-tensile-6.2.2/lib/python3.12/site-packages/Tensile/Source/..//Ops/gen_assembly.sh: line 80: deactivate: command not found
-  # hipblaslt> make[2]: *** [library/CMakeFiles/build_ext_op_library.dir/build.make:76: Tensile/library/hipblasltExtOpLibrary.dat] Error 127
-  # hipblaslt> make[1]: *** [CMakeFiles/Makefile2:187: library/CMakeFiles/build_ext_op_library.dir/all] Error 2
 
   buildInputs = [
     # rocblas

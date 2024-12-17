@@ -29,8 +29,10 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
   cmakeFlags = [
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
   ];
   postInstall = ''
     rm -r $out/hip/bin

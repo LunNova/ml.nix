@@ -6,7 +6,6 @@
 , cmake
 , rocm-cmake
 , clr
-, clang-tools-extra
 , openmp
 , rocblas
 , rocmlir
@@ -49,7 +48,7 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "migraphx";
-  version = "6.2.2";
+  version = "6.3.0";
 
   outputs = [
     "out"
@@ -63,7 +62,7 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "AMDMIGraphX";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-QUMBrWgcVmv8WfDDUOKGx9/EipihKXB3DsRxojWHLco=";
+    hash = "sha256-h9cTbrMwHeRGVJS/uHQnCXplNcrBqxbhwz2AcAEso0M=";
   };
 
   nativeBuildInputs = [
@@ -71,7 +70,6 @@ stdenv.mkDerivation (finalAttrs: {
     cmake
     rocm-cmake
     clr
-    clang-tools-extra
     python3Packages.python
   ] ++ lib.optionals buildDocs [
     latex

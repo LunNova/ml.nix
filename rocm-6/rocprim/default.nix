@@ -1,5 +1,4 @@
 { lib
-, fetchpatch
 , stdenv
 , fetchFromGitHub
 , rocmUpdateScript
@@ -15,7 +14,7 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocprim";
-  version = "6.2.2";
+  version = "6.3.0";
 
   outputs = [
     "out"
@@ -29,16 +28,10 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "rocPRIM";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-C9dON/LT8ItVqnbDzj3arD32jqMvVNaT01X7UuzOZm8=";
+    hash = "sha256-0aHxpBuYIYhI2UER45YhHHL5YcxA+XeXoihcUs2AmCo=";
   };
 
-  patches = [
-    (fetchpatch {
-      name = "arch-conversion-marco.patch";
-      url = "https://salsa.debian.org/rocm-team/rocprim/-/raw/70c8aaee3cf545d92685f4ed9bf8f41e3d4d570c/debian/patches/arch-conversion-macro.patch";
-      hash = "sha256-oXdmbCArOB5bKE8ozDFrSh4opbO+c4VI6PNhljeUSms=";
-    })
-  ];
+  patches = [ ];
 
   nativeBuildInputs = [
     cmake
@@ -53,8 +46,10 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
   cmakeFlags = [
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
     # Manually define CMAKE_INSTALL_<DIR>
     # See: https://github.com/NixOS/nixpkgs/pull/197838
     "-DCMAKE_INSTALL_BINDIR=bin"

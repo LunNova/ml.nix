@@ -7,7 +7,7 @@
 , clang
 , clr
 , rocm-core
-, rocm-thunk
+, rocm-runtime
 , rocm-device-libs
 , roctracer
 , rocdbgapi
@@ -30,7 +30,7 @@ let
 
     paths = [
       rocm-core
-      rocm-thunk
+      rocm-runtime
       rocm-device-libs
       roctracer
       rocdbgapi

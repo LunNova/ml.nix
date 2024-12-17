@@ -44,6 +44,8 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
   # env.NIX_DEBUG = 1;
   # env.CFLAGS = "-g1 -fsanitize=undefined";
   # env.CXXFLAGS = "-g1 -fsanitize=undefined";
@@ -51,7 +53,7 @@ stdenv.mkDerivation (finalAttrs: {
   # env.NIX_CXXFLAGS_COMPILE = "-g1";
 
   cmakeFlags = [
-    "-DCMAKE_RELEASE_TYPE=RelWithDebInfo"
+    "-DCMAKE_RELEASE_TYPE=Release"
     "-DLLVM_TARGETS_TO_BUILD=AMDGPU;${llvmNativeTarget}"
   ];
 

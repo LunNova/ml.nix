@@ -103,11 +103,13 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
   env.NIX_DISABLE_WRAPPER_INCLUDES = 1;
   env.TENSILE_ROCM_ASSEMBLER_PATH = "${clang-sysrooted}/bin/clang++";
 
   cmakeFlags = [
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
     "--log-level=debug"
     #"--debug-output"
     # "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON"
@@ -158,6 +160,10 @@ stdenv.mkDerivation (finalAttrs: {
   ] ++ lib.optionals (buildTests || buildBenchmarks) [
     (lib.cmakeFeature "CMAKE_CXX_FLAGS" "-I${amd-blis}/include/blis")
   ];
+
+  preConfigure = ''
+    makeFlagsArray+=("-l$((NIX_BUILD_CORES / 2))")
+  '';
 
   passthru.amdgpu_targets = gpuTargets';
 

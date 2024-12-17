@@ -3,6 +3,7 @@
 , fetchFromGitHub
 , rocmUpdateScript
 , cmake
+, amdsmi
 , rocm-smi
 , rocm-runtime
 , libcap
@@ -41,7 +42,7 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "rdc";
-  version = "6.2.2";
+  version = "6.3.0";
 
   outputs = [
     "out"
@@ -55,7 +56,7 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "rdc";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-XHEKcqDBizPnHqGCPjV5FDN8C4GsCapyOdSeYzRA+HU=";
+    hash = "sha256-sKsti7LeWsxvOmc9h/srsl0OmHkJIRNRiV+8mFVG3/M=";
   };
 
   nativeBuildInputs = [
@@ -68,6 +69,7 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   buildInputs = [
+    amdsmi
     rocm-smi
     rocm-runtime
     libcap

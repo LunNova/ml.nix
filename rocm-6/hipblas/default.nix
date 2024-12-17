@@ -45,24 +45,8 @@ stdenv.mkDerivation (finalAttrs: {
   };
 
   postPatch = ''
-        substituteInPlace library/CMakeLists.txt \
-          --replace-fail "find_package(Git REQUIRED)" ""
-
-    # touch /build/source/library/include/hipblas-export.h
-    # touch /build/source/library/include/hipblas-version.h
-    #       cmd1="/nix/store/kkrwq0jr88vgz6b3qyzd5a4n3544wd75-clr-6.2.2/bin/clang++ -x c++ -E
-    #       -DUSE_PROF_API=1 -D__HIP_PLATFORM_AMD__=1 -D__HIP_PLATFORM_SOLVER__ -Dhipblas_EXPORTS
-    #       -DUSE_PROF_API=1 -D__HIP_PLATFORM_AMD__=1 -D__HIP_PLATFORM_SOLVER__ -Dhipblas_EXPORTS -I/build/source/library/include -I/build/source/build/include/hipblas -I/build/source/build/include -I/build/source/library/src/include -I/build/source/library/src
-    #        -isystem /nix/store/xdyrs1m3gln059j62alynk7fi6d05c0d-rocblas-6.2.2/include -isystem /nix/store/s3bshf7jlhw96g36pf9sk2y112yjdd6m-rocsolver-6.2.2/include -isystem /nix/store/kkrwq0jr88vgz6b3qyzd5a4n3544wd75-clr-6.2.2/include -std=c++17 /build/source/library/src/amd_detail/hipblas.cpp -###"
-    #        cmd1="/nix/store/kkrwq0jr88vgz6b3qyzd5a4n3544wd75-clr-6.2.2/bin/clang++ -x c++ -E -DUSE_PROF_API=1 -D__HIP_PLATFORM_AMD__=1 -D__HIP_PLATFORM_SOLVER__ -Dhipblas_EXPORTS -I/build/source/library/include -I/build/source/build/include/hipblas -I/build/source/build/include -I/build/source/library/src/include -I/build/source/library/src -isystem /nix/store/xdyrs1m3gln059j62alynk7fi6d05c0d-rocblas-6.2.2/include -isystem /nix/store/s3bshf7jlhw96g36pf9sk2y112yjdd6m-rocsolver-6.2.2/include -isystem /nix/store/kkrwq0jr88vgz6b3qyzd5a4n3544wd75-clr-6.2.2/include -std=c++17 /build/source/library/src/amd_detail/hipblas.cpp -dD -v"
-    #        echo $cmd1
-    #        set +e
-    #        set +o pipefail
-    #        $cmd1 
-    #        #sleep 1
-    #        #stdbuf -i 10K -o 10K -e 10K $cmd1 | grep -C25 "__has_attribute"
-    #        #$cmd1  | grep -A 5 -B 5 "__has_attribute.*noinline"
-    # exit 1
+    substituteInPlace library/CMakeLists.txt \
+      --replace-fail "find_package(Git REQUIRED)" ""
   '';
 
   nativeBuildInputs = [
@@ -90,9 +74,11 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
 
   cmakeFlags = [
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
     #"-DCMAKE_C_COMPILER=${lib.getBin clr}/bin/clang"
     "-DCMAKE_CXX_COMPILER=${lib.getBin clr}/bin/hipcc"
     #"-DCMAKE_CXX_COMPILER=${lib.getBin clr}/bin/amdclang++"

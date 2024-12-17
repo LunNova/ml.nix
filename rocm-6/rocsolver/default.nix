@@ -70,8 +70,10 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
   cmakeFlags = [
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
     "--log-level=debug"
     "-DCMAKE_VERBOSE_MAKEFILE=ON"
     "-DCMAKE_CXX_FLAGS=-Wno-switch" # Way too many warnings

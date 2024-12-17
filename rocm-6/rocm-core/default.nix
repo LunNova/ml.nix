@@ -3,11 +3,12 @@
 , fetchFromGitHub
 , rocmUpdateScript
 , cmake
+, writeText
 }:
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocm-core";
-  version = "6.2.2";
+  version = "6.3.0";
 
   src = fetchFromGitHub {
     owner = "ROCm";
@@ -17,7 +18,20 @@ stdenv.mkDerivation (finalAttrs: {
   };
 
   nativeBuildInputs = [ cmake ];
-  cmakeFlags = [ "-DROCM_VERSION=${finalAttrs.version}" ];
+  env.ROCM_LIBPATCH_VERSION = "60300";
+  env.BUILD_ID = "nixos-${finalAttrs.env.ROCM_LIBPATCH_VERSION}";
+  env.ROCM_BUILD_ID = "release-${finalAttrs.env.BUILD_ID}";
+  cmakeFlags = [
+    "-DROCM_LIBPATCH_VERSION=${finalAttrs.env.ROCM_LIBPATCH_VERSION}"
+    "-DROCM_VERSION=${finalAttrs.version}"
+    "-DBUILD_ID=${finalAttrs.env.BUILD_ID}"
+  ];
+
+  setupHook = writeText "setupHook.sh" ''
+    export ROCM_LIBPATCH_VERSION="${finalAttrs.env.ROCM_LIBPATCH_VERSION}"
+    export BUILD_ID="${finalAttrs.env.BUILD_ID}"
+    export ROCM_BUILD_ID="${finalAttrs.env.ROCM_BUILD_ID}"
+  '';
 
   passthru.updateScript = rocmUpdateScript {
     name = finalAttrs.pname;

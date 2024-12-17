@@ -1,7 +1,6 @@
 { lib
 , stdenv
 , rocm-runtime
-, rocm-thunk
 , rocprofiler
 , numactl
 , libpciaccess
@@ -44,7 +43,6 @@ stdenv.mkDerivation (finalAttrs: {
     elfutils
     rocm-runtime
 
-    rocm-thunk
     rocprofiler.rocmtoolkit-merged
 
     python3Packages.lxml

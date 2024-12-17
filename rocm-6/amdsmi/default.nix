@@ -3,27 +3,55 @@
 , fetchFromGitHub
 , rocmUpdateScript
 , cmake
+, pkg-config
+, libdrm
 , wrapPython
+, autoPatchelfHook
 }:
 
+let
+  esmi_ib_src = fetchFromGitHub {
+    owner = "amd";
+    repo = "esmi_ib_library";
+    rev = "esmi_pkg_ver-3.0.3";
+    hash = "sha256-q0w5c5c+CpXkklmSyfzc+sbkt4cHNxscGJA3AXwvHxQ=";
+  };
+in
 stdenv.mkDerivation (finalAttrs: {
-  pname = "rocm-smi";
+  pname = "amdsmi";
   version = "6.3.0";
-
   src = fetchFromGitHub {
-    owner = "ROCm";
-    repo = "rocm_smi_lib";
+    owner = "rocm";
+    repo = "amdsmi";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-WeryzhEGzwDH7edteG7j8Kosqc/z6BECaIDSFNHuXZ0=";
+    hash = "sha256-aZhRCzc2LO2J3DdHkREyNWmQ+6KZJuk5OulspbDTuZk=";
   };
 
-  patches = [ ./cmake.patch ];
+  postPatch = ''
+    substituteInPlace goamdsmi_shim/CMakeLists.txt \
+      --replace-fail "amd_smi)" ${"'"}''${AMD_SMI_TARGET})' \
+      --replace-fail 'target_link_libraries(''${GOAMDSMI_SHIM_TARGET} -L' '#'
+
+    cp -rf --no-preserve=mode ${esmi_ib_src} ./esmi_ib_library
+    mkdir -p ./esmi_ib_library/include/asm
+    cp ${./amd_hsmp.h} ./esmi_ib_library/include/asm/amd_hsmp.h
+  '';
+
+  patches = [ ];
 
   nativeBuildInputs = [
     cmake
+    pkg-config
     wrapPython
+    autoPatchelfHook
   ];
 
+  buildInputs = [
+    libdrm
+  ];
+
+
+  # env.CFLAGS = "-I"
   cmakeFlags = [
     # Manually define CMAKE_INSTALL_<DIR>
     # See: https://github.com/NixOS/nixpkgs/pull/197838
@@ -34,8 +62,6 @@ stdenv.mkDerivation (finalAttrs: {
 
   postInstall = ''
     wrapPythonProgramsIn $out
-    mv $out/libexec/rocm_smi/.rsmiBindingsInit.py-wrapped $out/libexec/rocm_smi/rsmiBindingsInit.py
-    mv $out/libexec/rocm_smi/.rsmiBindings.py-wrapped $out/libexec/rocm_smi/rsmiBindings.py
   '';
 
   passthru.updateScript = rocmUpdateScript {

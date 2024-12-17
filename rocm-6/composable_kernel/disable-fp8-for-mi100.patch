@@ -1,0 +1,354 @@
+From 03c6448ba3c854195c61c817036b66af1fa0e844 Mon Sep 17 00:00:00 2001
+From: Illia Silin <98187287+illsilin@users.noreply.github.com>
+Date: Thu, 31 Oct 2024 22:52:23 -0700
+Subject: [PATCH] Reduce build time. (#1621)
+
+* disable fp8 gemm_universal on gfx90a and gfx908 by default
+
+* fix cmake syntax
+
+* fix clang format
+
+* add ifdefs in amd_xdlops
+
+* disable fp8 gemm instances on gfx90a by default
+
+* update readme
+---
+ CMakeLists.txt                                | 12 ++++++--
+ README.md                                     | 14 +++++----
+ .../gpu/CMakeLists.txt                        | 30 +++++++++++++++++--
+ ...tiply_multiply_xdl_f8_f8_bf16_mk_nk_mn.hpp | 10 ++++---
+ ...gemm_xdl_universal_f8_f8_bf16_mk_kn_mn.hpp |  5 ++--
+ ...gemm_xdl_universal_f8_f8_bf16_mk_nk_mn.hpp | 10 ++++---
+ profiler/src/profile_gemm_universal.cpp       |  8 ++++-
+ .../test_gemm_universal_xdl.cpp               |  4 +--
+ 8 files changed, 69 insertions(+), 24 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 6a51803639..74628597af 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -137,7 +137,7 @@ if(GPU_TARGETS)
+ else()
+     set(USER_GPU_TARGETS 0)
+ endif()
+-find_package(hip)
++find_package(hip REQUIRED)
+ # No assumption that HIP kernels are launched with uniform block size for backward compatibility
+ # SWDEV-413293 and https://reviews.llvm.org/D155213
+ math(EXPR hip_VERSION_FLAT "(${hip_VERSION_MAJOR} * 1000 + ${hip_VERSION_MINOR}) * 100000 + ${hip_VERSION_PATCH}")
+@@ -170,7 +170,10 @@ else()
+         set(CK_GPU_TARGETS ${GPU_TARGETS})
+     endif()
+ endif()
+-
++#if the user did not set GPU_TARGETS, delete whatever was set by HIP package
++if(NOT USER_GPU_TARGETS)
++    set(GPU_TARGETS "")
++endif()
+ #make sure all the targets on the list are actually supported by the current compiler
+ rocm_check_target_ids(SUPPORTED_GPU_TARGETS
+         TARGETS ${CK_GPU_TARGETS})
+@@ -187,6 +190,10 @@ if (SUPPORTED_GPU_TARGETS MATCHES "gfx11" OR SUPPORTED_GPU_TARGETS MATCHES "gfx1
+     add_definitions(-DCK_USE_WMMA)
+     set(CK_USE_WMMA "ON")
+ endif()
++option(CK_USE_FP8_ON_UNSUPPORTED_ARCH "Enable FP8 GEMM instances on older architectures" OFF)
++if(CK_USE_FP8_ON_UNSUPPORTED_ARCH AND (SUPPORTED_GPU_TARGETS MATCHES "gfx90a" OR SUPPORTED_GPU_TARGETS MATCHES "gfx908"))
++    add_definitions(-DCK_USE_FP8_ON_UNSUPPORTED_ARCH)
++endif()
+ 
+ # CK config file to record supported datatypes, etc.
+ configure_file(include/ck/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/ck/config.h)
+@@ -314,7 +321,6 @@ link_libraries(${OpenMP_gomp_LIBRARY})
+ link_libraries(${OpenMP_pthread_LIBRARY})
+ 
+ ## HIP
+-find_package(HIP REQUIRED)
+ # Override HIP version in config.h, if necessary.
+ # The variables set by find_package() can't be overwritten,
+ # therefore let's use intermediate variables.
+diff --git a/README.md b/README.md
+index 0534065153..302173dc17 100644
+--- a/README.md
++++ b/README.md
+@@ -137,12 +137,11 @@ Docker images are available on [DockerHub](https://hub.docker.com/r/rocm/composa
+ 
+     You can find instructions for running ckProfiler in [profiler](/profiler).
+ 
+-Note the `-j` option for building with multiple threads in parallel. This speeds up the build significantly.
++Note the `-j` option for building with multiple threads in parallel, which speeds up the build significantly.
++However, `-j` launches unlimited number of threads, which can cause the build to run out of memory and
++crash. On average, you should expect each thread to use ~2Gb of RAM.
+ Depending on the number of CPU cores and the amount of RAM on your system, you may want to
+-limit the number of threads. For example, if you have a 128-core CPU and 64 Gb of RAM.
+-
+-By default, `-j` launches one thread per CPU core, which can cause the build to run out of memory and
+-crash. In such cases, you can reduce the number of threads to 32 by using `-j32`.
++limit the number of threads. For example, if you have a 128-core CPU and 128 Gb of RAM it's advisable to use `-j32`.
+ 
+ Additional cmake flags can be used to significantly speed-up the build:
+ 
+@@ -154,6 +153,11 @@ Additional cmake flags can be used to significantly speed-up the build:
+   `batched_gemm_multi_d_dl`. These instances are useful on architectures like the NAVI2x, as most
+   other platforms have faster instances, such as `xdl` or `wmma`, available.
+ 
++* `CK_USE_FP8_ON_UNSUPPORTED_ARCH` (default is OFF) must be set to ON in order to build instances,
++  such as `gemm_universal` and `gemm_multiply_multiply` for fp8 data type for GPU targets which do not
++  have native support for fp8 data type, such as gfx908 or gfx90a. These instances are useful on
++  architectures like the MI100/MI200 for the functional support only.
++
+ ## Using sccache for building
+ 
+ The default CK Docker images come with a pre-installed version of sccache, which supports clang
+diff --git a/library/src/tensor_operation_instance/gpu/CMakeLists.txt b/library/src/tensor_operation_instance/gpu/CMakeLists.txt
+index f82176ffc6..6756c33514 100644
+--- a/library/src/tensor_operation_instance/gpu/CMakeLists.txt
++++ b/library/src/tensor_operation_instance/gpu/CMakeLists.txt
+@@ -67,6 +67,21 @@ function(add_instance_library INSTANCE_NAME)
+          list(REMOVE_ITEM ARGN "${source}")
+     endif()
+     endforeach()
++    # Do not build gemm_universal_f8 or gemm_multiply_multiply_f8 for any targets except gfx94
++    if(NOT CK_USE_FP8_ON_UNSUPPORTED_ARCH)
++    foreach(source IN LISTS ARGN)
++    if(NOT INST_TARGETS MATCHES "gfx94" AND source MATCHES "gemm_multiply_multiply_xdl_f8")
++         message("removing gemm_multiply_multiply_f8 instance ${source} ")
++         list(REMOVE_ITEM ARGN "${source}")
++    endif()
++    endforeach()
++    foreach(source IN LISTS ARGN)
++    if(NOT INST_TARGETS MATCHES "gfx94" AND source MATCHES "gemm_xdl_universal" AND source MATCHES "_f8_")
++         message("removing gemm_universal_f8 instance ${source} ")
++         list(REMOVE_ITEM ARGN "${source}")
++    endif()
++    endforeach()
++    endif()
+     #only continue if there are some source files left on the list
+     if(ARGN)
+         set(INST_OBJ)
+@@ -74,11 +89,20 @@ function(add_instance_library INSTANCE_NAME)
+             set(INST_TARGETS ${SUPPORTED_GPU_TARGETS})
+             if(source MATCHES "_xdl")
+                 list(REMOVE_ITEM INST_TARGETS gfx900 gfx906 gfx1030 gfx1100 gfx1101 gfx1102 gfx1103 gfx1200 gfx1201)
+-            elseif(ARGN MATCHES "_wmma")
++            elseif(source MATCHES "_wmma")
+                 list(REMOVE_ITEM INST_TARGETS gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030)
+-            elseif(ARGN MATCHES "mha")
++            elseif(source MATCHES "mha")
+                 list(REMOVE_ITEM INST_TARGETS gfx900 gfx906 gfx908 gfx1030 gfx1100 gfx1101 gfx1102 gfx1103 gfx1200 gfx1201)
+             endif()
++            #only build the fp8 gemm instances for gfx908/90a if the build argument is set
++            if(NOT CK_USE_FP8_ON_UNSUPPORTED_ARCH)
++                if(source MATCHES "gemm_xdl_universal" AND source MATCHES "f8")
++                    list(REMOVE_ITEM INST_TARGETS gfx900 gfx906 gfx908 gfx90a gfx1030 gfx1100 gfx1101 gfx1102 gfx1103 gfx1200 gfx1201)
++                endif()
++                if(source MATCHES "gemm_multiply_multiply_f8")
++                    list(REMOVE_ITEM INST_TARGETS gfx900 gfx906 gfx908 gfx90a gfx1030 gfx1100 gfx1101 gfx1102 gfx1103 gfx1200 gfx1201)
++                endif()
++            endif()
+             set(offload_targets)
+             foreach(target IN LISTS INST_TARGETS)
+                     string(APPEND offload_targets "--offload-arch=${target} ")
+@@ -108,7 +132,7 @@ function(add_instance_library INSTANCE_NAME)
+ 
+         # flags to compress the library
+         if(NOT WIN32 AND ${hip_VERSION_FLAT} GREATER 600241132)
+-            message("Adding --offload-compress flag for ${INSTANCE_NAME}")
++            #message("Adding --offload-compress flag for ${INSTANCE_NAME}")
+             target_compile_options(${INSTANCE_NAME} PRIVATE --offload-compress)
+         endif()
+ 
+diff --git a/library/src/tensor_operation_instance/gpu/gemm_multiply_multiply/device_gemm_multiply_multiply_xdl_f8_f8_bf16/device_gemm_multiply_multiply_xdl_f8_f8_bf16_mk_nk_mn.hpp b/library/src/tensor_operation_instance/gpu/gemm_multiply_multiply/device_gemm_multiply_multiply_xdl_f8_f8_bf16/device_gemm_multiply_multiply_xdl_f8_f8_bf16_mk_nk_mn.hpp
+index 8a24af1b8b..b1b64ca853 100644
+--- a/library/src/tensor_operation_instance/gpu/gemm_multiply_multiply/device_gemm_multiply_multiply_xdl_f8_f8_bf16/device_gemm_multiply_multiply_xdl_f8_f8_bf16_mk_nk_mn.hpp
++++ b/library/src/tensor_operation_instance/gpu/gemm_multiply_multiply/device_gemm_multiply_multiply_xdl_f8_f8_bf16/device_gemm_multiply_multiply_xdl_f8_f8_bf16_mk_nk_mn.hpp
+@@ -36,12 +36,12 @@ static constexpr auto Interwave = BlockGemmPipelineScheduler::Interwave;
+ 
+ template <GemmSpecialization GemmSpec>
+ using device_gemm_multiply_multiply_xdl_f8_f8_bf16_mk_nk_mn_comp_instances = std::tuple<
+-    // clang-format off
++// clang-format off
+         //################################| ALayout| BLayout|         DsLayout| ELayout|AData| BData|          DsData| EData| AccData| Cshuffle|           A|           B|              C|          GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1|MPer| NPer| MXdl| NXdl|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds|    CShuffle|    CShuffle|     CBlockTransferClusterLengths|  CBlockTransfer|                         Block-wiseGemm|               Block-wiseGemm|
+         //################################|        |        |                 |        | Type|  Type|            Type|  Type|    Type|     Type| Elementwise| Elementwise|    Elementwise|Specialization|  Size| Block| Block| Block|    |    | XDL|  XDL|  Per|  Per|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| MXdlPerWave| NXdlPerWave| _MBlock_MXdlPerWave_MWaveMPerXdl| ScalarPerVector|                               Pipeline|                     Pipeline|
+         //################################|        |        |                 |        |     |      |                |      |        |         |   Operation|   Operation|      Operation|              |      |      |      |      |    |    |    |     | Wave| Wave| Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |  PerShuffle|  PerShuffle| _NBlock_NXdlPerWave_NWaveNPerXdl|   _NWaveNPerXdl|                              Scheduler|                     Verision|
+         //################################|        |        |                 |        |     |      |                |      |        |         |            |            |               |              |      |      |      |      |    |    |    |     |     |     |                |               |               |               |               |               |          |                |               |               |              |               |               |          |            |            |                                 |                |                                       |                             |
+-        
++#if defined(__gfx94__) || defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+         // Compute friendly
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>,  Row,    F8,    F8,    Tuple<F32, F32>, BF16,  F32,     F32,     PassThrough, PassThrough, MultiplyMultiply,    GemmSpec,   256,   256,   256,    64,  16,  16,  32,   32,    4,    4,     S<4, 64, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<4, 64, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,     S<8, 8, 1>,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v4, F8>,
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>,  Row,    F8,    F8,    Tuple<F32, F32>, BF16,  F32,     F32,     PassThrough, PassThrough, MultiplyMultiply,    GemmSpec,   256,   128,   128,   128,  16,  16,  32,   32,    2,    2,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,     S<8, 8, 1>,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v4, F8>,
+@@ -58,17 +58,18 @@ using device_gemm_multiply_multiply_xdl_f8_f8_bf16_mk_nk_mn_comp_instances = std
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>,  Row,    F8,    F8,    Tuple<F32, F32>, BF16,  F32,     F32,     PassThrough, PassThrough, MultiplyMultiply,    GemmSpec,   256,   128,    64,    128, 16,  16,  32,   32,    2,    1,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,     S<8, 8, 1>,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v3, F8>,
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>,  Row,    F8,    F8,    Tuple<F32, F32>, BF16,  F32,     F32,     PassThrough, PassThrough, MultiplyMultiply,    GemmSpec,   256,    64,   128,    128, 16,  16,  32,   32,    1,    2,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,     S<8, 8, 1>,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v3, F8>,
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>,  Row,    F8,    F8,    Tuple<F32, F32>, BF16,  F32,     F32,     PassThrough, PassThrough, MultiplyMultiply,    GemmSpec,   256,    64,    64,    128, 16,  16,  32,   32,    1,    1,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,     S<8, 8, 1>,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v3, F8>
++#endif
+     // clang-format on
+     >;
+ 
+ template <BlockGemmPipelineScheduler BlkGemmPipeSched, GemmSpecialization GemmSpec>
+ using device_gemm_multiply_multiply_xdl_f8_f8_bf16_mk_nk_mn_mem_instances = std::tuple<
+-    // clang-format off
++// clang-format off
+         //################################| ALayout| BLayout|         DsLayout| ELayout|AData| BData|          DsData| EData| AccData| Cshuffle|           A|           B|               C|          GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1|MPer| NPer| MXdl| NXdl|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds|    CShuffle|    CShuffle|     CBlockTransferClusterLengths|  CBlockTransfer|    Block-wiseGemm|               Block-wiseGemm|
+         //################################|        |        |                 |        | Type|  Type|            Type|  Type|    Type|     Type| Elementwise| Elementwise|     Elementwise|Specialization|  Size| Block| Block| Block|    |    | XDL|  XDL|  Per|  Per|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| MXdlPerWave| NXdlPerWave| _MBlock_MXdlPerWave_MWaveMPerXdl| ScalarPerVector|          Pipeline|                     Pipeline|
+         //################################|        |        |                 |        |     |      |                |      |        |         |   Operation|   Operation|       Operation|              |      |      |      |      |    |    |    |     | Wave| Wave| Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |  PerShuffle|  PerShuffle| _NBlock_NXdlPerWave_NWaveNPerXdl|   _NWaveNPerXdl|         Scheduler|                     Verision|
+         //################################|        |        |                 |        |     |      |                |      |        |         |            |            |                |              |      |      |      |      |    |    |    |     |     |     |                |               |               |               |               |               |          |                |               |               |              |               |               |          |            |            |                                 |                |                  |                             |
+-
++#if defined(__gfx94__) || defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+         // Latency friendly 
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>, Row,     F8,     F8,    Tuple<F32, F32>, BF16,   F32,     F32,  PassThrough, PassThrough, MultiplyMultiply,     GemmSpec,   128,    32,   16,    128, 16,  16,  16,   16,    1,    1,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 8>,      S<2, 2, 1>,  BlkGemmPipeSched, BlockGemmPipelineVersion::v1, F8>,
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>, Row,     F8,     F8,    Tuple<F32, F32>, BF16,   F32,     F32,  PassThrough, PassThrough, MultiplyMultiply,     GemmSpec,    64,    16,   16,    128, 16,  16,  16,   16,    1,    1,     S<8,  8, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8,  8, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 4>,      S<4, 4, 1>,  BlkGemmPipeSched, BlockGemmPipelineVersion::v1, F8>,
+@@ -90,6 +91,7 @@ using device_gemm_multiply_multiply_xdl_f8_f8_bf16_mk_nk_mn_mem_instances = std:
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>, Row,     F8,     F8,    Tuple<F32, F32>, BF16,   F32,     F32,  PassThrough, PassThrough, MultiplyMultiply,     GemmSpec,   128,    32,  128,    128, 16,  16,  32,   32,    1,    2,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 8>,     S<8, 8, 1>,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>,
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>, Row,     F8,     F8,    Tuple<F32, F32>, BF16,   F32,     F32,  PassThrough, PassThrough, MultiplyMultiply,     GemmSpec,   256,    16,  256,    128, 16,  16,  16,   16,    1,    4,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 16>,    S<4, 4, 1>,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>,
+         DeviceGemmMultiD_Xdl_CShuffle_V3<  Row,     Col,     Tuple<Row, Col>, Row,     F8,     F8,    Tuple<F32, F32>, BF16,   F32,     F32,  PassThrough, PassThrough, MultiplyMultiply,     GemmSpec,   256,    32,  256,    128, 16,  16,  32,   32,    1,    2,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 16>,    S<8, 8, 1>,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>
++#endif
+     // clang-format on
+     >;
+ } // namespace instance
+diff --git a/library/src/tensor_operation_instance/gpu/gemm_universal/device_gemm_xdl_universal_f8_f8_bf16/device_gemm_xdl_universal_f8_f8_bf16_mk_kn_mn.hpp b/library/src/tensor_operation_instance/gpu/gemm_universal/device_gemm_xdl_universal_f8_f8_bf16/device_gemm_xdl_universal_f8_f8_bf16_mk_kn_mn.hpp
+index 3b930e9894..658714d359 100644
+--- a/library/src/tensor_operation_instance/gpu/gemm_universal/device_gemm_xdl_universal_f8_f8_bf16/device_gemm_xdl_universal_f8_f8_bf16_mk_kn_mn.hpp
++++ b/library/src/tensor_operation_instance/gpu/gemm_universal/device_gemm_xdl_universal_f8_f8_bf16/device_gemm_xdl_universal_f8_f8_bf16_mk_kn_mn.hpp
+@@ -62,12 +62,12 @@ using device_gemm_xdl_universal_f8_f8_bf16_mk_kn_mn_comp_instances = std::tuple<
+ 
+ template <BlockGemmPipelineScheduler BlkGemmPipeSched, GemmSpecialization GemmSpec>
+ using device_gemm_xdl_universal_f8_f8_bf16_mk_kn_mn_mem_instances = std::tuple<
+-    // clang-format off
++// clang-format off
+         //#########################| ALayout| BLayout| CLayout|AData| BData| CData| AccData| Cshuffle|           A|           B|           C|          GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1|MPer| NPer| MXdl| NXdl|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds|    CShuffle|    CShuffle|     CBlockTransferClusterLengths|  CBlockTransfer|    Block-wiseGemm|               Block-wiseGemm|
+         //#########################|        |        |        | Type|  Type|  Type|    Type|     Type| Elementwise| Elementwise| Elementwise|Specialization|  Size| Block| Block| Block|    |    | XDL|  XDL|  Per|  Per|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| MXdlPerWave| NXdlPerWave| _MBlock_MXdlPerWave_MWaveMPerXdl| ScalarPerVector|          Pipeline|                     Pipeline|
+         //#########################|        |        |        |     |      |      |        |         |   Operation|   Operation|   Operation|              |      |      |      |      |    |    |    |     | Wave| Wave| Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |  PerShuffle|  PerShuffle| _NBlock_NXdlPerWave_NWaveNPerXdl|   _NWaveNPerXdl|         Scheduler|                     Verision|
+         //#########################|        |        |        |     |      |      |        |         |            |            |            |              |      |      |      |      |    |    |    |     |     |     |                |               |               |               |               |               |          |                |               |               |              |               |               |          |            |            |                                 |                |                  |                             |
+-
++#if defined(__gfx94__) || defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+         // Latency friendly 
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Row,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   128,    32,   16,    128, 16,   4,  16,   16,    1,    1,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<32, 4, 1>,     S<0, 2, 1>,    S<0, 2, 1>,               1,              4,              4,          0,          1,           1,                   S<1, 16, 1, 8>,               2,  BlkGemmPipeSched, BlockGemmPipelineVersion::v1, F8>,
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Row,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,    64,    16,   16,    128, 16,   4,  16,   16,    1,    1,     S<8,  8, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<32, 2, 1>,     S<0, 2, 1>,    S<0, 2, 1>,               1,              8,              4,          0,          1,           1,                   S<1, 16, 1, 4>,               4,  BlkGemmPipeSched, BlockGemmPipelineVersion::v1, F8>,
+@@ -90,6 +90,7 @@ using device_gemm_xdl_universal_f8_f8_bf16_mk_kn_mn_mem_instances = std::tuple<
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Row,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   128,    16,   64,    128, 16,   4,  16,   16,    1,    2,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<32, 4, 1>,     S<0, 2, 1>,    S<0, 2, 1>,               1,             16,              4,          0,          1,           1,                   S<1, 16, 1, 8>,               4,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>,
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Row,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   128,    16,  128,    128, 16,   8,  16,   16,    1,    4,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<16, 8, 1>,     S<0, 2, 1>,    S<0, 2, 1>,               1,             16,              8,          0,          1,           1,                   S<1, 16, 1, 8>,               4,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>,
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Row,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   256,    16,  256,    128,  8,   8,  16,   16,    1,    4,     S<16, 16, 1>,    S<1, 0, 2>,    S<1, 0, 2>,               2,              8,              8,          0,    S<16, 16, 1>,    S<0, 2, 1>,    S<0, 2, 1>,               1,             16,              8,          0,          1,           1,                   S<1, 16, 1, 16>,              4,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>
++#endif
+     // clang-format on
+     >;
+ } // namespace instance
+diff --git a/library/src/tensor_operation_instance/gpu/gemm_universal/device_gemm_xdl_universal_f8_f8_bf16/device_gemm_xdl_universal_f8_f8_bf16_mk_nk_mn.hpp b/library/src/tensor_operation_instance/gpu/gemm_universal/device_gemm_xdl_universal_f8_f8_bf16/device_gemm_xdl_universal_f8_f8_bf16_mk_nk_mn.hpp
+index b621cad942..382ed5b5a2 100644
+--- a/library/src/tensor_operation_instance/gpu/gemm_universal/device_gemm_xdl_universal_f8_f8_bf16/device_gemm_xdl_universal_f8_f8_bf16_mk_nk_mn.hpp
++++ b/library/src/tensor_operation_instance/gpu/gemm_universal/device_gemm_xdl_universal_f8_f8_bf16/device_gemm_xdl_universal_f8_f8_bf16_mk_nk_mn.hpp
+@@ -35,12 +35,12 @@ static constexpr auto Interwave = BlockGemmPipelineScheduler::Interwave;
+ 
+ template <GemmSpecialization GemmSpec>
+ using device_gemm_xdl_universal_f8_f8_bf16_mk_nk_mn_comp_instances = std::tuple<
+-    // clang-format off
++// clang-format off
+         //#########################| ALayout| BLayout| CLayout|AData| BData| CData| AccData| Cshuffle|           A|           B|           C|          GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1|MPer| NPer| MXdl| NXdl|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds|    CShuffle|    CShuffle|     CBlockTransferClusterLengths|  CBlockTransfer|                         Block-wiseGemm|               Block-wiseGemm|
+         //#########################|        |        |        | Type|  Type|  Type|    Type|     Type| Elementwise| Elementwise| Elementwise|Specialization|  Size| Block| Block| Block|    |    | XDL|  XDL|  Per|  Per|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| MXdlPerWave| NXdlPerWave| _MBlock_MXdlPerWave_MWaveMPerXdl| ScalarPerVector|                               Pipeline|                     Pipeline|
+         //#########################|        |        |        |     |      |      |        |         |   Operation|   Operation|   Operation|              |      |      |      |      |    |    |    |     | Wave| Wave| Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |  PerShuffle|  PerShuffle| _NBlock_NXdlPerWave_NWaveNPerXdl|   _NWaveNPerXdl|                              Scheduler|                     Verision|
+         //#########################|        |        |        |     |      |      |        |         |            |            |            |              |      |      |      |      |    |    |    |     |     |     |                |               |               |               |               |               |          |                |               |               |              |               |               |          |            |            |                                 |                |                                       |                             |
+-        
++#if defined(__gfx94__) || defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+         // Compute friendly
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   256,   256,   256,    64,  16,  16,  32,   32,    4,    4,     S<4, 64, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<4, 64, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,               8,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v4, F8>,
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   256,   128,   128,   128,  16,  16,  32,   32,    2,    2,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,               8,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v4, F8>,
+@@ -57,17 +57,18 @@ using device_gemm_xdl_universal_f8_f8_bf16_mk_nk_mn_comp_instances = std::tuple<
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   256,   128,    64,    128, 16,  16,  32,   32,    2,    1,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,               8,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v3, F8>,
+         // DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   256,    64,   128,    128, 16,  16,  32,   32,    1,    2,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,               8,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v3, F8>,
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   256,    64,    64,    128, 16,  16,  32,   32,    1,    1,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 32, 1, 8>,               8,  BlockGemmPipelineScheduler::Intrawave, BlockGemmPipelineVersion::v3, F8>
++#endif
+     // clang-format on
+     >;
+ 
+ template <BlockGemmPipelineScheduler BlkGemmPipeSched, GemmSpecialization GemmSpec>
+ using device_gemm_xdl_universal_f8_f8_bf16_mk_nk_mn_mem_instances = std::tuple<
+-    // clang-format off
++// clang-format off
+         //#########################| ALayout| BLayout| CLayout|AData| BData| CData| AccData| Cshuffle|           A|           B|           C|          GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1|MPer| NPer| MXdl| NXdl|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds|    CShuffle|    CShuffle|     CBlockTransferClusterLengths|  CBlockTransfer|    Block-wiseGemm|               Block-wiseGemm|
+         //#########################|        |        |        | Type|  Type|  Type|    Type|     Type| Elementwise| Elementwise| Elementwise|Specialization|  Size| Block| Block| Block|    |    | XDL|  XDL|  Per|  Per|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| MXdlPerWave| NXdlPerWave| _MBlock_MXdlPerWave_MWaveMPerXdl| ScalarPerVector|          Pipeline|                     Pipeline|
+         //#########################|        |        |        |     |      |      |        |         |   Operation|   Operation|   Operation|              |      |      |      |      |    |    |    |     | Wave| Wave| Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |  PerShuffle|  PerShuffle| _NBlock_NXdlPerWave_NWaveNPerXdl|   _NWaveNPerXdl|         Scheduler|                     Verision|
+         //#########################|        |        |        |     |      |      |        |         |            |            |            |              |      |      |      |      |    |    |    |     |     |     |                |               |               |               |               |               |          |                |               |               |              |               |               |          |            |            |                                 |                |                  |                             |
+-
++#if defined(__gfx94__) || defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+         // Latency friendly 
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   128,    32,   16,    128, 16,  16,  16,   16,    1,    1,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 8>,               2,  BlkGemmPipeSched, BlockGemmPipelineVersion::v1, F8>,
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,    64,    16,   16,    128, 16,  16,  16,   16,    1,    1,     S<8,  8, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8,  8, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 4>,               4,  BlkGemmPipeSched, BlockGemmPipelineVersion::v1, F8>,
+@@ -97,6 +98,7 @@ using device_gemm_xdl_universal_f8_f8_bf16_mk_nk_mn_mem_instances = std::tuple<
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   128,    32,  128,    128, 16,  16,  32,   32,    1,    2,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 8>,               8,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>,
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   256,    16,  256,    128, 16,  16,  16,   16,    1,    4,     S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 16, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 16>,              4,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>,
+         DeviceGemm_Xdl_CShuffleV3<  Row,     Col,     Row,     F8,     F8,    BF16,   F32,     BF16,  PassThrough, PassThrough, PassThrough,       GemmSpec,   256,    32,  256,    128, 16,  16,  32,   32,    1,    2,     S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<8, 32, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,          1,           1,                   S<1, 16, 1, 16>,              8,  BlkGemmPipeSched, BlockGemmPipelineVersion::v2, F8>
++#endif
+     // clang-format on
+     >;
+ } // namespace instance
+diff --git a/profiler/src/profile_gemm_universal.cpp b/profiler/src/profile_gemm_universal.cpp
+index f86dddc728..576bd009b6 100644
+--- a/profiler/src/profile_gemm_universal.cpp
++++ b/profiler/src/profile_gemm_universal.cpp
+@@ -101,7 +101,9 @@ int profile_gemm_universal(int argc, char* argv[])
+     using F32  = float;
+     using F16  = ck::half_t;
+     using BF16 = ck::bhalf_t;
+-    using F8   = ck::f8_t;
++#if defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
++    using F8 = ck::f8_t;
++#endif
+ 
+     using Row = ck::tensor_layout::gemm::RowMajor;
+     using Col = ck::tensor_layout::gemm::ColumnMajor;
+@@ -162,6 +164,7 @@ int profile_gemm_universal(int argc, char* argv[])
+     {
+         return profile(F16{}, F16{}, F16{}, F32{}, F16{}, Row{}, Col{}, Row{});
+     }
++#if defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+     else if(data_type == GemmDataType::F16_F8_F16 && layout == GemmMatrixLayout::MK_KN_MN)
+     {
+         return profile(F16{}, F8{}, F16{}, F32{}, F16{}, Row{}, Row{}, Row{});
+@@ -178,6 +181,7 @@ int profile_gemm_universal(int argc, char* argv[])
+     {
+         return profile(F8{}, F16{}, F16{}, F32{}, F16{}, Row{}, Col{}, Row{});
+     }
++#endif
+     else if(data_type == GemmDataType::BF16_BF16_BF16 && layout == GemmMatrixLayout::MK_KN_MN)
+     {
+         return profile(BF16{}, BF16{}, BF16{}, F32{}, BF16{}, Row{}, Row{}, Row{});
+@@ -194,6 +198,7 @@ int profile_gemm_universal(int argc, char* argv[])
+     {
+         return profile(BF16{}, BF16{}, BF16{}, F32{}, BF16{}, Col{}, Row{}, Row{});
+     }
++#if defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+     else if(data_type == GemmDataType::F8_F8_BF16 && layout == GemmMatrixLayout::MK_KN_MN)
+     {
+         return profile(F8{}, F8{}, F8{}, F32{}, BF16{}, Row{}, Row{}, Row{});
+@@ -202,6 +207,7 @@ int profile_gemm_universal(int argc, char* argv[])
+     {
+         return profile(F8{}, F8{}, F8{}, F32{}, BF16{}, Row{}, Col{}, Row{});
+     }
++#endif
+     else
+     {
+         std::cout << "this data_type & layout is not implemented" << std::endl;
+diff --git a/test/gemm_universal/test_gemm_universal_xdl.cpp b/test/gemm_universal/test_gemm_universal_xdl.cpp
+index 0d29c5fb76..23b5c74ddd 100644
+--- a/test/gemm_universal/test_gemm_universal_xdl.cpp
++++ b/test/gemm_universal/test_gemm_universal_xdl.cpp
+@@ -56,7 +56,7 @@ class TestGemmUniversal_KM_NK
+ using KernelTypes_MK_KN = ::testing::Types<
+     //         ADataType, BDataType, ComputeDataType, CDataType
+     std::tuple<      F16,       F16,             F16,     F16>,
+-#if (defined CK_ENABLE_FP8)
++#if defined(CK_ENABLE_FP8) && defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+     std::tuple<      F16,        F8,             F16,     F16>,
+     std::tuple<       F8,       F16,             F16,     F16>,
+     std::tuple<       F8,        F8,              F8,    BF16>,
+@@ -66,7 +66,7 @@ using KernelTypes_MK_KN = ::testing::Types<
+ using KernelTypes_MK_NK = ::testing::Types<
+     //         ADataType, BDataType, ComputeDataType, CDataType
+     std::tuple<      F16,       F16,             F16,     F16>,
+-#if (defined CK_ENABLE_FP8)
++#if defined(CK_ENABLE_FP8) && defined(CK_USE_FP8_ON_UNSUPPORTED_ARCH)
+     std::tuple<      F16,        F8,             F16,     F16>,
+     std::tuple<       F8,       F16,             F16,     F16>,
+     std::tuple<       F8,        F8,              F8,    BF16>,

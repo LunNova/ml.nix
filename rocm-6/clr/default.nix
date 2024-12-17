@@ -25,7 +25,7 @@
 , python3Packages
 , rocm-merged-llvm
 , khronos-ocl-icd-loader
-, writeText
+, writeShellScriptBin
 }:
 
 
@@ -42,6 +42,10 @@ let
     "--set HSA_PATH ${rocm-runtime}"
     "--set ROCM_PATH $out"
   ];
+  ROCM_LIBPATCH_VERSION = "60300";
+  amdclang = writeShellScriptBin "amdclang++" ''
+    exec clang++ "$@"
+  '';
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "clr";
@@ -56,10 +60,12 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "clr";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-VFf0kC3mrwiRLY7WWSkCJ/dr9oMNzK2hJocZ55Jwq7o=";
+    hash = "sha256-IPz+3557+O2NLWdKeZieBG/9rcL7CuzEWfaB9MpUdso=";
     # rev = "25a893658a3ad7d10c752f84453f29a7cafebfd8";
     # hash = "sha256-sXYA8Xep8G31V0s7fBiIGneGuni3gOaeKjllAkczflA=";
   };
+
+  # env.ROCM_LIBPATCH_VERSION = ROCM_LIBPATCH_VERSION;
 
   nativeBuildInputs = [
     makeWrapper
@@ -67,6 +73,7 @@ stdenv.mkDerivation (finalAttrs: {
     perl
     python3Packages.python
     python3Packages.cppheaderparser
+    amdclang
   ];
 
   buildInputs = [
@@ -82,6 +89,7 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   propagatedBuildInputs = [
+    rocm-core
     rocm-device-libs
     rocm-comgr
     rocm-runtime
@@ -89,11 +97,11 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
 
   cmakeFlags = [
-    # "-DCMAKE_C_FLAGS_INIT=-fsanitize=undefined"
-    # "-DCMAKE_CXX_FLAGS_INIT=-fsanitize=undefined"
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
     "-DCMAKE_POLICY_DEFAULT_CMP0072=NEW" # Prefer newer OpenGL libraries
     "-DCLR_BUILD_HIP=ON"
     "-DCLR_BUILD_OCL=ON"
@@ -119,6 +127,8 @@ stdenv.mkDerivation (finalAttrs: {
   # TODO: rebase patches
   patches = [
     ./cmake-find-x11-libgl.patch
+    ./0001-handle-v1-of-compressed-fatbins.patch # https://github.com/ROCm/clr/issues/99
+    # ./fix-null-stream-sync-perf.patch # https://github.com/ROCm/clr/issues/78
     # (fetchpatch {
     #   name = "add-missing-operators.patch";
     #   url = "https://github.com/ROCm/clr/commit/86bd518981b364c138f9901b28a529899d8654f3.patch";
@@ -154,26 +164,24 @@ stdenv.mkDerivation (finalAttrs: {
     substituteInPlace hipamd/src/hip_embed_pch.sh \
       --replace "\''$LLVM_DIR/bin/clang" "${hipClangPath}/bin/clang"
 
-    # https://lists.debian.org/debian-ai/2024/02/msg00178.html
-    # substituteInPlace rocclr/utils/flags.hpp \
-    #   --replace-fail "HIP_USE_RUNTIME_UNBUNDLER, false" "HIP_USE_RUNTIME_UNBUNDLER, true"
-
     substituteInPlace opencl/khronos/icd/loader/icd_platform.h \
       --replace-fail '#define ICD_VENDOR_PATH "/etc/OpenCL/vendors/";' \
                      '#define ICD_VENDOR_PATH "/run/opengl-driver/etc/OpenCL/vendors/";'
+
+    # new unbundler has better error messages, defaulting it on
+    substituteInPlace rocclr/utils/flags.hpp \
+      --replace-fail "HIP_ALWAYS_USE_NEW_COMGR_UNBUNDLING_ACTION, false" "HIP_ALWAYS_USE_NEW_COMGR_UNBUNDLING_ACTION, true"
   '';
-  # substituteInPlace rocclr/utils/flags.hpp \
-  #   --replace-fail "HIP_ALWAYS_USE_NEW_COMGR_UNBUNDLING_ACTION, false" "HIP_ALWAYS_USE_NEW_COMGR_UNBUNDLING_ACTION, true"
 
   # FIXME: amdclang/amdclang++ need to be present for ROCm 6.3!
   postInstall = ''
+    chmod +x $out/bin/*
     patchShebangs $out/bin
 
-    # hipcc.bin and hipconfig.bin is mysteriously never installed
-    #cp -a $ {hipcc}/bin/{hipcc.bin,hipconfig.bin} $out/bin
+    cp ${amdclang}/bin/* $out/bin/
 
-    wrapProgram $out/bin/hipcc.bin ${lib.concatStringsSep " " wrapperArgs}
-    wrapProgram $out/bin/hipconfig.bin ${lib.concatStringsSep " " wrapperArgs}
+    wrapProgram $out/bin/hipcc ${lib.concatStringsSep " " wrapperArgs}
+    wrapProgram $out/bin/hipconfig ${lib.concatStringsSep " " wrapperArgs}
     wrapProgram $out/bin/hipcc.pl ${lib.concatStringsSep " " wrapperArgs}
     wrapProgram $out/bin/hipconfig.pl ${lib.concatStringsSep " " wrapperArgs}
 
@@ -197,6 +205,7 @@ stdenv.mkDerivation (finalAttrs: {
     export HIP_DEVICE_LIB_PATH="${rocm-device-libs}/amdgcn/bitcode"
     export NIX_CC_USE_RESPONSE_FILE=0
     export HIP_CLANG_PATH="${hipClangPath}/bin"
+    export ROCM_LIBPATCH_VERSION="${ROCM_LIBPATCH_VERSION}"
     export HSA_PATH="${rocm-runtime}"' > $out/nix-support/setup-hook
 
     ln -s ${stdenv.cc}/bin/clang{,++} $out/bin/
@@ -229,13 +238,13 @@ stdenv.mkDerivation (finalAttrs: {
     # We cannot use this for each ROCm library, as each defines their own supported targets
     # See: https://github.com/ROCm/ROCm/blob/77cbac4abab13046ee93d8b5bf410684caf91145/README.md#library-target-matrix
     gpuTargets = lib.forEach [
-      "803"
+      # "803"
       "900"
       "906"
       "908"
       "90a"
-      "940"
-      "941"
+      # "940"
+      # "941"
       "942"
       "1010"
       "1012"

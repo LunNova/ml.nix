@@ -17,6 +17,10 @@
 , buildTests ? false # `argument of type 'NoneType' is not iterable`
 }:
 
+# FIXME FIXME FIXME: rocmlir has an entire separate LLVM build in a subdirectory this is silly
+# It seems to be forked from AMD's own LLVM
+# If possible reusing the rocmPackages.llvm build would be better
+
 # Theoretically, we could have our MLIR have an output
 # with the source and built objects so that we can just
 # use it as the external LLVM repo for this
@@ -31,9 +35,9 @@ let
     else if stdenv.hostPlatform.isAarch64 then "AArch64"
     else throw "Unsupported ROCm LLVM platform";
 in
-stdenv.mkDerivation (finalAttrs: {
+builtins.trace "FIXME: rocmlir is using its own LLVM build" stdenv.mkDerivation (finalAttrs: {
   pname = "rocmlir${suffix}";
-  version = "6.2.2";
+  version = "6.3.0";
 
   outputs = [
     "out"
@@ -45,19 +49,16 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "rocMLIR";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-14J7yl9AIBbKD3GuA8VUvI/+Hf34cnAhwdS1iiLxoS8=";
+    hash = "sha256-I0bdpx2bpeehWrcwfefrxXn/5Wp2zimgDXxm4YDNRZo=";
   };
 
   patches = [
     ./initparamdata-sort-const.patch
   ];
 
-  env.NIX_DISABLE_WRAPPER_INCLUDES = 1;
-
   nativeBuildInputs = [
     cmake
     rocm-cmake
-    #ninja
     clr
     python3Packages.python
     python3Packages.tomli
@@ -75,9 +76,13 @@ stdenv.mkDerivation (finalAttrs: {
     ncurses
   ];
 
+  dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
+
   cmakeFlags = [
     "-DLLVM_TARGETS_TO_BUILD=AMDGPU;${llvmNativeTarget}"
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
     "-DLLVM_USE_LINKER=lld"
     "-DLLVM_ENABLE_ZSTD=FORCE_ON"
     "-DLLVM_ENABLE_ZLIB=FORCE_ON"
@@ -93,6 +98,10 @@ stdenv.mkDerivation (finalAttrs: {
   ] ++ lib.optionals (!buildRockCompiler) [
     "-DROCM_TEST_CHIPSET=gfx000"
   ];
+
+  preConfigure = ''
+    makeFlagsArray+=("-l$(((NIX_BUILD_CORES * 2) / 3))")
+  '';
 
   postPatch = ''
     patchShebangs mlir

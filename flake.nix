@@ -4,7 +4,7 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { nixpkgs, flake-utils, ... }:
     flake-utils.lib.eachSystem flake-utils.lib.defaultSystems (system:
       let
         pkgs = import nixpkgs {
@@ -141,7 +141,7 @@
         inherit (pkgs) rocmPackages;
         inherit (rocmPackages) rocmPath;
         self = {
-
+          packages.py-spy = pkgs.callPackage ./py-spy.nix { };
           packages.magma = pkgs.magma;
           packages.torch = pythonPkgs.torch;
           packages.flash-attention = pythonPkgs.callPackage ./flash-attention.nix { };

@@ -2,21 +2,24 @@
 , stdenv
 , fetchFromGitHub
 , rocmUpdateScript
+, rocm-core
 , cmake
 }:
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocm-cmake";
-  version = "6.2.2";
+  version = "6.3.0";
 
   src = fetchFromGitHub {
     owner = "ROCm";
     repo = "rocm-cmake";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-xX0dEK+IitEBe0MuB3LHFZFRrQVmSI3+wq9k8l47tRU=";
+    hash = "sha256-8kEcwqHJF584AteuddP7Ai7n6ltVZJ8a6RsYIWGMs0U=";
   };
 
   nativeBuildInputs = [ cmake ];
+
+  buildInputs = [ rocm-core ];
 
   passthru.updateScript = rocmUpdateScript {
     name = finalAttrs.pname;

@@ -20,7 +20,7 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocsparse";
-  version = "6.2.2";
+  version = "6.3.0";
 
   outputs = [
     "out"
@@ -34,7 +34,7 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "rocSPARSE";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-udEgN+M36CojGa846uDGZ7+WIGguImRB++hdOcH4NOg=";
+    hash = "sha256-vyLfXbnxPZlR6mfbLh1E7S7HdOSHjuhGQcfihAlvvwY=";
   };
   # env.CFLAGS = "-fsanitize=undefined";
   # env.CXXFLAGS = "-fsanitize=undefined";
@@ -58,8 +58,10 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
+  env.CFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-g1 -gz";
   cmakeFlags = [
-    "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "-DCMAKE_BUILD_TYPE=Release"
     # Manually define CMAKE_INSTALL_<DIR>
     # See: https://github.com/NixOS/nixpkgs/pull/197838
     "-DCMAKE_INSTALL_BINDIR=bin"

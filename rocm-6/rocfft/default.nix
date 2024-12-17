@@ -20,13 +20,13 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocfft";
-  version = "6.2.2";
+  version = "6.3.0";
 
   src = fetchFromGitHub {
     owner = "ROCm";
     repo = "rocFFT";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-qfVaP0rus9/hr6ZfiH27AuDt6EaXxUN9adl+j10MSms=";
+    hash = "sha256-RrxdwZ64uC7lQzyJI1eGHX2dmRnW8TfNThnuvuz5XWo=";
   };
 
   nativeBuildInputs = [
@@ -51,6 +51,10 @@ stdenv.mkDerivation (finalAttrs: {
   ] ++ lib.optionals (gpuTargets != [ ]) [
     "-DAMDGPU_TARGETS=${lib.concatStringsSep ";" gpuTargets}"
   ];
+
+  preConfigure = ''
+    makeFlagsArray+=("-l$(((NIX_BUILD_CORES * 2) / 3))")
+  '';
 
   passthru = {
     test = stdenv.mkDerivation {
