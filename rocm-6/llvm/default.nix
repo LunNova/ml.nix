@@ -143,7 +143,7 @@ let
 
   addGccLtoCmakeFlags = !llvmPackagesRocm.stdenv.cc.isClang;
   gccLtoFlags = lib.optionalString addGccLtoCmakeFlags " -D_GLIBCXX_USE_CXX11_ABI=0 -flto -ffat-lto-objects -flto-compression-level=19 -Wl,-flto";
-  llvmExtraCflags = "-O3 -march=znver3 -mtune=znver3${gccLtoFlags}" + lib.optionalString llvmPackagesRocm.stdenv.cc.isClang " -flto=thin -ffat-lto-objects -fno-omit-frame-pointer -gz -g1 -DNDEBUG";
+  llvmExtraCflags = "-O3 -march=skylake -mtune=znver3${gccLtoFlags}" + lib.optionalString llvmPackagesRocm.stdenv.cc.isClang " -flto=thin -ffat-lto-objects -fno-omit-frame-pointer -gz -g1 -DNDEBUG";
 in
 rec {
   inherit (llvmPackagesRocm) libunwind;

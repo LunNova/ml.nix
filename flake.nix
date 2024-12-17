@@ -74,33 +74,15 @@
           separateDebugInfo = false;
           disallowedReferences = [ ]; # debug info does point to openssl
           configureFlags = old.configureFlags ++ [ "--with-undefined-behavior-sanitizer" ];
-          # env.LDFLAGS = "-fsanitize=undefined";
-          # env.CFLAGS = "-fsanitize=undefined -shared-libsan -frtti -frtti-data";
-          # env.CXXFLAGS = "-fsanitize=undefined -shared-libsan -frtti -frtti-data";
-          #env.NIX_CFLAGS_COMPILE = "-fsanitize=undefined -w -march=znver1 -mtune=znver1";
           env = old.env // {
             CFLAGS = "-fno-sanitize=function -frtti -frtti-data";
           };
           cmakeFlags = (old.cmakeFlags or [ ]) ++ [
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
-            # "-DCMAKE_MODULE_LINKER_FLAGS_INIT=-fsanitize=undefined"
-            # "-DCMAKE_EXE_LINKER_FLAGS_INIT=-fsanitize=undefined"
-            # "-DCMAKE_SHARED_LINKER_FLAGS_INIT=-fsanitize=undefined"
-            # "-DCMAKE_STATIC_LINKER_FLAGS_INIT=-fsanitize=undefined"
           ];
         });
         pythonPkgsOverridenInterp = pkgs.python312.override {
           packageOverrides = ps: prev: {
-            #stdenv = rocmPackages.llvm.rocmClangStdenv;
-            # pycparser = prev.pycparser.overridePythonAttrs (old: {
-            #     doCheck = false;
-            # });
-            # websockets = prev.websockets.overridePythonAttrs (old: {
-            #     doCheck = false;
-            # });
-            # meson = prev.meson.overridePythonAttrs (old: {
-            #     doCheck = false;
-            # });
             torch = (prev.torch.override {
               stdenv = rocmPackages.llvm.rocmClangStdenv;
               #cudaSupport = true;
@@ -150,25 +132,19 @@
             # FIXME: still builds with something ancient
             stdenv = pkgs.rocmPackages.llvm.rocmClangStdenv;
             python3Packages = pythonPkgs;
-            #cudaSupport = true;
-            #vulkanSupport = true;
-            #cublasSupport = false;
-            #clblastSupport = true;
           }).overrideAttrs (old:
             {
               nativeBuildInputs = builtins.filter (x: (x.pname or null) != "ninja") old.nativeBuildInputs;
               enableParallelBuilding = true;
               env = (old.env or { }) // {
-                #CFLAGS = "-fsanitize=undefined -frtti -frtti-data";
-                #CXXFLAGS = "-fsanitize=undefined -frtti -frtti-data";
+                #CFLAGS = "-fsanitize=undefined";
+                #CXXFLAGS = "-fsanitize=undefined";
                 NIX_CFLAGS_COMPILE = "-w";
                 LLAMA_HIPBLAS = "1";
                 ROCM_PATH = rocmPath;
                 GPU_TARGETS = "gfx908,gfx1030,gfx1100";
               };
               cmakeFlags = (old.cmakeFlags or [ ]) ++ [
-                # "-DCMAKE_C_FLAGS_INIT=-fsanitize=undefined"
-                # "-DCMAKE_CXX_FLAGS_INIT=-fsanitize=undefined"
                 "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
               ];
               dontStrip = true;
@@ -189,7 +165,7 @@
             rocmPackages_6 = pkgs.lib.recurseIntoAttrs pkgs.rocmPackages_6;
           };
 
-          checks = self.legacyPackages // { recurseForDerivations = true; }; # // { all = pkgs.linkFarm "all-checks" checkPkgs; };
+          checks = self.legacyPackages // { recurseForDerivations = true; };
           # TODO: make default a devShell that detects what's compatible?
           #devShells.default = throw "You need to specify which output you want: CPU, ROCm, or CUDA.";
           devShells.cpu = import ./impl.nix { inherit pkgs; variant = "CPU"; };

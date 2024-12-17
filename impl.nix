@@ -50,18 +50,13 @@ let
         #cudaArches = [ "sm_89" ];
       })
 
-      # .overrideAttrs (old: {
-      #   env = (old.env or { }) // { NIX_CFLAGS_COMPILE = "-march=native -mtune=native"; };
-      # })
     ] else if variant == "ROCM" then [
       # ((pkgs.koboldcpp.override {
       #   #cudaSupport = true;
       #   vulkanSupport = true;
       #   cublasSupport = false;
       #   clblastSupport = true;
-      # }).overrideAttrs (old: {
-      #   env = (old.env or {}) // { NIX_CFLAGS_COMPILE = "-march=native -mtune=native"; };
-      # }))
+      # })
       ((pkgs.llama-cpp.override {
         stdenv = pkgs.rocmPackages.llvm.rocmClangStdenv;
         rocmSupport = true;
@@ -75,7 +70,7 @@ let
       }).overrideAttrs (old: {
         env = (old.env or { }) // {
           HSA_OVERRIDE_GFX_VERSION = "9.0.8";
-          NIX_CFLAGS_COMPILE = "-march=native -mtune=native";
+          NIX_CFLAGS_COMPILE = "-march=skylake -mtune=znver3";
           ROCM_PATH = "${rocmPath}";
         };
         #nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.clang ];
