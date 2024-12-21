@@ -12,7 +12,7 @@
           config.allowUnfree = true;
           config.allowBroken = true;
           overlays = [
-            (f: super:
+            (f: _super:
               let rocm = f.callPackage ./rocm-6 { }; in {
                 rocmPackages_6 = rocm;
                 rocmPackages = rocm;
@@ -132,7 +132,6 @@
             rocmPackages_6 = pkgs.lib.recurseIntoAttrs pkgs.rocmPackages_6;
           };
 
-          checks = self.legacyPackages // { recurseForDerivations = true; };
           # TODO: make default a devShell that detects what's compatible?
           #devShells.default = throw "You need to specify which output you want: CPU, ROCm, or CUDA.";
           devShells.cpu = import ./impl.nix { inherit pkgs; variant = "CPU"; };
