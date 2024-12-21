@@ -16,27 +16,7 @@
               let rocm = f.callPackage ./rocm-6 { }; in {
                 rocmPackages_6 = rocm;
                 rocmPackages = rocm;
-                # FIXME: this is loading rocm5 into same process
-                # and might be fucking things up
-                magma = (super.magma.override {
-                  gpuTargets = [ "908" "90a" "942" "1030" "1100" ];
-                  #rocmPackages_5 = rocm;
-                }).overrideAttrs (old: {
-                  buildInputs = old.buildInputs ++ [ rocm.hipblas-common ];
-                  postPatch = (old.postPatch or "") + ''
-                    substituteInPlace CMakeLists.txt \
-                      --replace-fail  "700;701;702;703;704;705;801;802;803;805;810;900;902;904;906;908;909;90c;1010;1011;1012;1030;1031;1032;1033" \
-                                      "900;902;904;906;908;909;90c;90a;942;1010;1011;1012;1030;1031;1032;1033;1100;1200"
-                  '';
-                  env.HIPCC_COMPILE_FLAGS_APPEND = "-O3 -Wno-format-nonliteral -parallel-jobs=8 --offload-arch=gfx908 --offload-arch=gfx1030 --offload-arch=gfx90a";
-                  env.CXXFLAGS = "--offload-arch=gfx908 --offload-arch=gfx1030 --offload-arch=gfx90a";
-                  cmakeFlags = old.cmakeFlags ++ [
-                    "-DGPU_TARGET=gfx908;gfx90a;gfx942;gfx1030;gfx1100"
-                    "-DAMDGPU_TARGETS=gfx908;gfx90a;gfx942;gfx1030;gfx1100"
-                    "-Wno-dev"
-                    "-DCMAKE_VERBOSE_MAKEFILE=ON"
-                  ];
-                });
+                # FIXME: we need to patch magma to use rocm 6, for now can't use it as pytorch dep
               })
           ];
         };
@@ -149,7 +129,6 @@
 
           legacyPackages = self.packages // {
             inherit (pkgs) rocmPackages;
-            llvmPackages = pkgs.llvmPackages_18;
             rocmPackages_6 = pkgs.lib.recurseIntoAttrs pkgs.rocmPackages_6;
           };
 

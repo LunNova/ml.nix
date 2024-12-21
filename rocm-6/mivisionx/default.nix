@@ -43,7 +43,7 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "MIVisionX";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-14s1GdTWwBRujHaU+Tv/HWyQAzOepD1nmeQtvBiEWCY=";
+    hash = "sha256-QC9M8Q0i016s3CDGGQERLDJpjCF2Ku2BOT/RaDzxUy8=";
   };
 
   patches = [
