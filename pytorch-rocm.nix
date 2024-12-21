@@ -13,22 +13,18 @@ let
     dontStrip = true;
     separateDebugInfo = false;
     disallowedReferences = [ ]; # debug info does point to openssl and that's ok
-    configureFlags = old.configureFlags ++ [ "--disable-safety" ]; # [ "--with-undefined-behavior-sanitizer" ];
+    configureFlags = old.configureFlags ++ [ "--disable-safety" "--with-lto" ]; # [ "--with-undefined-behavior-sanitizer" ];
     hardeningDisable = [ "all" ];
     # env.LDFLAGS = "-fsanitize=undefined";
     # env.CFLAGS = "-fsanitize=undefined -shared-libsan -frtti -frtti-data";
     # env.CXXFLAGS = "-fsanitize=undefined -shared-libsan -frtti -frtti-data";
     #env.NIX_CFLAGS_COMPILE = "-fsanitize=undefined -w -march=znver1 -mtune=znver1";
     env = old.env // {
-      CFLAGS = "-O3 -g1 -gz -fno-omit-frame-pointer -momit-leaf-frame-pointer";
-      CXXFLAGS = "-O3 -g1 -gz -fno-omit-frame-pointer -momit-leaf-frame-pointer";
+      CFLAGS = "-O3 -DNDEBUG -g1 -gz -fno-omit-frame-pointer -momit-leaf-frame-pointer";
+      CXXFLAGS = "-O3 -DNDEBUG -g1 -gz -fno-omit-frame-pointer -momit-leaf-frame-pointer";
     };
     cmakeFlags = (old.cmakeFlags or [ ]) ++ [
       "-DCMAKE_BUILD_TYPE=Release"
-      # "-DCMAKE_MODULE_LINKER_FLAGS_INIT=-fsanitize=undefined"
-      # "-DCMAKE_EXE_LINKER_FLAGS_INIT=-fsanitize=undefined"
-      # "-DCMAKE_SHARED_LINKER_FLAGS_INIT=-fsanitize=undefined"
-      # "-DCMAKE_STATIC_LINKER_FLAGS_INIT=-fsanitize=undefined"
     ];
   });
   pythonPkgsOverridenInterp = pkgs.python312.override {
@@ -53,30 +49,30 @@ let
         #gpuTargets = ["8.9" "8.9+PTX"];
         MPISupport = true;
         effectiveMagma = pkgs.emptyDirectory;
-        triton = ps.triton-no-cuda.overrideAttrs (old: {
-          postPatch = old.postPatch + ''
-            substituteInPlace third_party/amd/backend/compiler.py \
-              --replace-fail '"/opt/rocm/llvm/bin/ld.lld"' "os.environ['ROCM_PATH']"' + "/llvm/bin/ld.lld"'
-          '';
-        });
+        inherit (pkgs.rocmPackages) triton;
       }).overridePythonAttrs (oldPyAttrs: rec {
         PYTORCH_BUILD_VERSION = "2.6.0a";
-        PYTORCH_BUILD_DATE = "20241215";
+        PYTORCH_BUILD_DATE = "20241203";
+        # PYTORCH_BUILD_DATE = "20241218";
         PYTORCH_BUILD_NUMBER = PYTORCH_BUILD_DATE;
         version = "${PYTORCH_BUILD_VERSION}-nightly-${PYTORCH_BUILD_DATE}";
         src = oldPyAttrs.src.override {
           owner = "pytorch";
           repo = "pytorch";
-          # rev = "7851460668d6df096884697c5a750d75b0c35ea2"; # 20241203
-          # hash = "sha256-pizc2Q/IXclkrfRDu8IEbPP34yiGJlZZ9xQof3jeIDY=";
-          rev = "9f9823e3d2e1c510aa934fa556ba3be658a4c34c"; # 20241215
-          hash = "sha256-+oL4d4Lzhss8BwW87hs6MlA9DB8WZ4pF/3uDLoIoYuI=";
+          rev = "7851460668d6df096884697c5a750d75b0c35ea2"; # 20241203
+          hash = "sha256-pizc2Q/IXclkrfRDu8IEbPP34yiGJlZZ9xQof3jeIDY=";
+          # rev = "9f9823e3d2e1c510aa934fa556ba3be658a4c34c"; # 20241215
+          # hash = "sha256-+oL4d4Lzhss8BwW87hs6MlA9DB8WZ4pF/3uDLoIoYuI=";
+          # rev = "5764ca46ed7c5b7518bacfd19c70eebaf479df44"; # 20241217
+          # hash = "sha256-eSSKSXTiO5QjmRULWPTNQ+FgM5ilRK87sbcROgQIeWY=";
+          # rev = "2ea4b56ec872424e486c4fe2d55da061067a2ed3"; # 20241218
+          # hash = "sha256-q8uCuhkfGu8Dr73DUBMbvy/v4+UKHehzhVpB2cih7is=";
           fetchSubmodules = true;
         };
         pythonImportsCheck = [ ];
       })).overrideAttrs (old: {
         env.MPI_HOME = pkgs.mpich;
-        env.USE_CK_FLASH_ATTENTION = 1;
+        # env.USE_CK_FLASH_ATTENTION = 1;
         env.USE_FLASH_ATTENTION = 1;
         enableParallelBuilding = true;
         nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.ninja pkgs.pkg-config ];
@@ -87,6 +83,7 @@ let
           pkgs.rocmPackages.hiprand
           pkgs.rocmPackages.hipblaslt
           pkgs.rocmPackages.hipblas-common
+          pkgs.rocmPackages.ck4inductor
           pkgs.amd-blis
           pkgs.mpich # FIXME: doesn't support GPU buffers
         ];
@@ -104,8 +101,21 @@ let
           "-DCMAKE_VERBOSE_MAKEFILE=ON"
         ];
         postPatch = old.postPatch + ''
+          echo HACK: Changing O2 to O3 in compile flags
+          substituteInPlace CMakeLists.txt cmake/public/utils.cmake \
+            --replace-fail "-O2" "-O3 -DNDEBUG" \
+            --replace-fail " -Wall" "" \
+            --replace-fail " -Wextra" "" \
+            --replace-fail " -Werror" ""
+          substituteInPlace third_party/fbgemm/CMakeLists.txt \
+            --replace-fail " -Wall" "" \
+            --replace-fail " -Wextra" "" \
+            --replace-fail " -Werror" ""
           echo HACK: removing third_party/composable_kernel and using system version, disabling submodule check
+          # FIXME: we do not actually rely on the composable_kernel build other than it making config.h exist
+          # could reduce how slow pytorch deps are to build by creating config.h alone
           rm -rf third_party/composable_kernel/
+          ln -s ${rocmPackages.composable_kernel}/ third_party/composable_kernel
           substituteInPlace cmake/Dependencies.cmake \
             --replace-fail 'find_package(MPI)' 'find_package(MPI REQUIRED)'
           substituteInPlace setup.py \
@@ -113,14 +123,20 @@ let
           echo HACK: enabling gfx908 for hipblaslt backends
           substituteInPlace aten/src/ATen/Context.cpp \
             --replace-fail '"gfx90a", "gfx940"' '"gfx908", "gfx90a", "gfx940"'
-          echo HACK: enabling gfx908 for CK flash attention backend
-          substituteInPlace aten/src/ATen/Context.cpp \
-            --replace-fail '"gfx90a",  "gfx942"' '"gfx908", "gfx90a",  "gfx942"'
+          # echo HACK: enabling gfx908 for CK flash attention backend
+          # substituteInPlace aten/src/ATen/Context.cpp \
+          #   --replace-fail '"gfx90a",  "gfx942"' '"gfx908", "gfx90a", "gfx942"'
           substituteInPlace aten/src/ATen/native/cuda/Blas.cpp \
             --replace-fail '"gfx90a", "gfx940"' '"gfx908", "gfx90a", "gfx940"'
+          substituteInPlace "torch/_inductor/utils.py" \
+            --replace-fail 'log.warning("Invalid path to CK library")' \
+            'log.warning(f"Invalid path to CK library {ck_package_dirname} != {config.rocm.ck_dir}")'
           echo HACK: enabling gfx908 for inductor CK backend
           substituteInPlace torch/_inductor/config.py \
             --replace-fail '["gfx90a"' '["gfx908", "gfx90a"'
+          echo HACK: making sure DNDEBUG is set when compiling ck kernels
+          substituteInPlace torch/_inductor/codegen/rocm/compile_command.py \
+            --replace-fail '"-enable-post-misched=0",' '"-enable-post-misched=0", "-DNDEBUG", "-DCK_TILE_FMHA_FWD_FAST_EXP2=1",'
           substituteInPlace third_party/NNPACK/CMakeLists.txt --replace "PYTHONPATH=" 'PYTHONPATH=$ENV{PYTHONPATH}:'
           sed -i '2s;^;set(PYTHON_SIX_SOURCE_DIR ${ps.six.src})\n;' third_party/NNPACK/CMakeLists.txt
           sed -i '2s;^;set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON CACHE INTERNAL "" FORCE)\n;' CMakeLists.txt
@@ -133,16 +149,20 @@ let
           export HIPCC_COMPILE_FLAGS_APPEND="-O3 -Wno-format-nonliteral -parallel-jobs=$HIPCC_JOBS"
           export HIPCC_LINK_FLAGS_APPEND="-O3 -parallel-jobs=$HIPCC_JOBS_LINK"
         '';
-        patches = (old.patches or [ ]) ++ [
-          # ./pytorch_flex_attention_reenter_make_fx_fix.patch
-          # Make Template code naming better for triton dump + ncu #143103
-          # [FlexAttention] Fix broken eager tracing #143344
-          # [FlexAttention] Allow num_warps 8 since when block size >=128 #143299
-          ./pytorch-fa-fix.patch
+        #           echo HACK: always allow CK
+        # substituteInPlace "torch/_inductor/utils.py" \
+        #   --replace-fail 'def use_ck_template(layout):' 'def use_ck_template(layout):
+        #     return layout.dtype in [torch.float16, torch.bfloat16, torch.float32]'
+        patches = old.patches or [
+          ./pytorch_flex_attention_reenter_make_fx_fix.patch
         ];
-        preConfigure = old.preConfigure + ''
-          export PYTORCH_ROCM_ARCH="gfx908;gfx90a;gfx1100"
-        '';
+        preConfigure = let cflags = "-O3 -w -g1 -gz -DNDEBUG -Wno-error"; in
+          old.preConfigure + ''
+            export PYTORCH_ROCM_ARCH="gfx908;gfx90a;gfx1100"
+            export CMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS ${cflags}"
+            export NINJA_SUMMARIZE_BUILD=1
+            export NINJA_STATUS="[%r jobs | %P %f/%t @ %o/s | %w | ETA %W ] "
+          '';
         #         echo "Setting LD_PRELOAD"
         # set -x
         # export LD_PRELOAD="${rocmPackages.clr}/llvm/lib/linux/libclang_rt.asan-x86_64.so"
@@ -156,15 +176,12 @@ let
         env.LD = "lld";
         # env.USE_SYSTEM_LIBS = 1; 
         USE_NNPACK = 1;
-        env.CFLAGS = "-w -g1";
-        env.CXXFLAGS = "-w -g1";
+        env.CFLAGS = "-w -g1 -gz";
+        env.CXXFLAGS = "-w -g1 -gz";
         env.USE_NINJA = 1;
         env.USE_MPI = 1;
         env.CMAKE_GENERATOR = "Ninja";
         env.PYTHON_SIX_SOURCE_DIR = ps.six.src;
-        # env.TORCH_CUDA_ARCH_LIST = "8.9 8.9+PTX";
-        # env.TORCH_NVCC_FLAGS = "-Xfatbin -compress-all";
-        env.NIX_CFLAGS_COMPILE = "-w -O3";
         env.AOTRITON_INSTALLED_PREFIX = "${pkgs.rocmPackages.aotriton}";
       });
     };
@@ -180,7 +197,7 @@ let
       hipfort
       rocm-core
       rocsolver
-      # rocalution FIXME: build fails
+      rocalution
       rocrand
       hipblas
       hipblaslt
@@ -191,6 +208,7 @@ let
       hipsparse
       hipsolver
       composable_kernel
+      ck4inductor
 
       rocm-core
       rocminfo
@@ -199,21 +217,33 @@ let
       rocm-runtime
       rocm-core
       rocm-comgr
+      llvm.clang
       llvm.openmp
     ];
   };
-in
-pkgs.mkShell {
-  buildInputs = [
+  shellPkgs = [
     pythonPkgs.python
     pythonPkgs.torch
+    pythonPkgs.pip
     # pythonPkgs.torchvision
     # pythonPkgs.torchmetrics
     # pythonPkgs.pytorch-lightning
     pythonPkgs.huggingface-hub
     pkgs.rocmPackages.rocm-smi
+    pkgs.rocmPackages.llvm.lld
+    pkgs.rocmPackages.llvm.rocm-merged-llvm
     pkgs.rocmPackages.clr
+    pkgs.cmake
+    pkgs.pkg-config
+    rocmPackages.composable_kernel
   ];
+  shell-deps = pkgs.symlinkJoin {
+    name = "shell-deps";
+    paths = shellPkgs ++ [ rocm-hip-libraries ];
+  };
+in
+pkgs.mkShellNoCC {
+  buildInputs = shellPkgs;
   # ROCM_PATH = "${pkgs.rocmPackages.clr}";
   ROCM_PATH = "${rocm-hip-libraries}";
 
@@ -226,23 +256,27 @@ pkgs.mkShell {
     pkgs.rdma-core # RCCL needs libibverbs.so.1
     rocm-hip-libraries
     pkgs.ncurses
+    pythonPkgs.torch
   ];
   passthru.pytorch = pythonPkgs.torch;
   passthru.rocm_path = "${rocm-hip-libraries}";
   TORCHINDUCTOR_FX_GRAPH_CACHE = 1;
   TORCHINDUCTOR_AUTOGRAD_CACHE = 1;
+  TORCH_ROCM_FA_PREFER_CK = 1;
   UBSAN_OPTIONS = "print_stacktrace=1";
   ASAN_OPTIONS = "symbolize=1:print_stats=0";
   ASAN_SYMBOLIZER_PATH = "${rocmPackages.clr}/llvm/bin/llvm-symbolizer";
-  HSA_FORCE_FINE_GRAIN_PCIE = 1;
-  HSA_ENABLE_IPC_MODE_LEGACY = 0;
+  TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS = "CK,ATEN,TRITON,CPP";
+  # HSA_FORCE_FINE_GRAIN_PCIE = 1;
+  # HSA_ENABLE_IPC_MODE_LEGACY = 0;
   HSA_TOOLS_REPORT_LOAD_FAILURE = 1;
-  HSA_VEN_AMD_AQLPROFILE_LOG = 1;
-  USE_CK_FLASH_ATTENTION = 1;
-  USE_FLASH_ATTENTION = 1;
-  HIPBLASLT_ALLOW_TF32 = 1;
-  ROCPROFILER_LOG = 1;
-  TORCHINDUCTOR_CK_DIR = "${rocmPackages.composable_kernel}";
+  # HSA_VEN_AMD_AQLPROFILE_LOG = 1;
+  # USE_CK_FLASH_ATTENTION = 1;
+  # USE_FLASH_ATTENTION = 1;
+  # HIPBLASLT_ALLOW_TF32 = 1;
+  # ROCPROFILER_LOG = 1;
+  LD = "lld";
+  TORCHINDUCTOR_CK_DIR = "${rocmPackages.ck4inductor}/lib/python3.12/site-packages/ck4inductor";
 
   # nix shell/develop have this annoying behavior where they put /tmp in a transient dir
   # https://github.com/NixOS/nix/blob/be04e68b3472f188ddd56f99fbdac0f04ce914e8/src/nix/develop.cc#L371
@@ -253,10 +287,14 @@ pkgs.mkShell {
     export TORCHINDUCTOR_CACHE_DIR=$HOME/ml-cache/torchinductor
     mkdir -p $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR
     # export LD_PRELOAD="${rocmPackages.clr}/llvm/lib/linux/libclang_rt.asan-x86_64.so ${pkgs.ncurses}/lib/libtinfo.so";
+    # export LD_PRELOAD="${rocmPackages.clr}/llvm/lib/linux/libclang_rt.ubsan_standalone-x86_64.so ${pkgs.ncurses}/lib/libtinfo.so";
     # export LD_PRELOAD="${pkgs.ncurses}/lib/libtinfo.so";
     export TMP=/tmp
     export TMPDIR=/tmp
     export TEMP=/tmp
     export TEMPDIR=/tmp
+
+    env | grep -E -i '(torch|hsa|rocm|rocr|ccl).*='
+    nix-store --query --requisites ${shell-deps} | cut -c 45- | sort | uniq
   '';
 }

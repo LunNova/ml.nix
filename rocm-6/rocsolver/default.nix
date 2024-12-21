@@ -70,13 +70,12 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   dontStrip = true;
-  env.CFLAGS = "-g1 -gz";
-  env.CXXFLAGS = "-g1 -gz";
+  env.CFLAGS = "-O3 -DNDEBUG -g1 -gz -Wno-switch";
+  env.CXXFLAGS = "-O3 -DNDEBUG -g1 -gz -Wno-switch";
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
     "--log-level=debug"
     "-DCMAKE_VERBOSE_MAKEFILE=ON"
-    "-DCMAKE_CXX_FLAGS=-Wno-switch" # Way too many warnings
     # Manually define CMAKE_INSTALL_<DIR>
     # See: https://github.com/NixOS/nixpkgs/pull/197838
     "-DCMAKE_INSTALL_BINDIR=bin"

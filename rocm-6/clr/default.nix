@@ -25,6 +25,7 @@
 , python3Packages
 , rocm-merged-llvm
 , khronos-ocl-icd-loader
+, gcc-unwrapped
 , writeShellScriptBin
 }:
 
@@ -227,6 +228,9 @@ stdenv.mkDerivation (finalAttrs: {
     ln -s ${hipClangPath} $out/llvm
   '';
 
+  disallowedRequisites = [
+    gcc-unwrapped
+  ];
   # postFixup = ''
   #   objdump --syms $out/lib/libamdhip64.so.6
   #   readelf --debug-dump=line $out/lib/libamdhip64.so.6

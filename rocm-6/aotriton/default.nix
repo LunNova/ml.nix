@@ -16,7 +16,6 @@
 , hipblas
 , cudaPackages
 , nlohmann_json
-, rocm-merged-llvm
 , triton-llvm
 , rocmlir
 , lapack-reference
@@ -36,13 +35,12 @@
 , gpuTargets ? [ "gfx908" ] #[  ]
 }:
 
-# FIXME: tries to download things in venv, fails, then moves on. should make that get skipped.
 stdenv.mkDerivation (finalAttrs:
 let
   py = python3.withPackages (ps: [ ps.pyyaml ps.distutils ps.setuptools ps.packaging ps.numpy ps.wheel ps.filelock ps.iniconfig ps.pluggy ps.pybind11 ]);
   gpuTargets' = lib.concatStringsSep ";" gpuTargets;
-  compiler = "amdclang++"; # FIXME: amdclang++ in future
-  cFlags = ""; # FIXME: cmake files need patched to include this properly
+  compiler = "amdclang++";
+  cFlags = "-O3 -DNDEBUG";
   # cudaRtIncludes = runCommandNoCC "cuda_includes" {} 
   #   ''
   #   mkdir -p $out
@@ -50,16 +48,17 @@ let
   #   tar xf  ${cudaPackages.cuda_cudart.src} --strip-components=1
   # '';
   cudaRtIncludes = cudaPackages.cudatoolkit;
-  triton-llvm' = triton-llvm.overrideAttrs (_old: {
-    doCheck = false;
-    patches = [ ];
-    src = fetchFromGitHub {
-      owner = "llvm";
-      repo = "llvm-project";
-      rev = "bd9145c8c21334e099d51b3e66f49d51d24931ee";
-      hash = "sha256-CSZkswB8KPdph8cGOayeKSBSQjSUsHGvqQ0TRN04KSQ=";
-    };
-  });
+  triton-llvm' = builtins.trace "aotriton: TODO: confirm using same triton-llvm pinned hash as triton 3.2.x is ok" triton-llvm;
+  # triton-llvm' = triton-llvm.overrideAttrs (_old: {
+  #   doCheck = false;
+  #   patches = [ ];
+  #   src = fetchFromGitHub {
+  #     owner = "llvm";
+  #     repo = "llvm-project";
+  #     rev = "bd9145c8c21334e099d51b3e66f49d51d24931ee";
+  #     hash = "sha256-CSZkswB8KPdph8cGOayeKSBSQjSUsHGvqQ0TRN04KSQ=";
+  #   };
+  # });
 in
 {
   pname = "aotriton";
@@ -165,7 +164,6 @@ in
     sed -i '2s;^;set(CMAKE_VERBOSE_MAKEFILE ON CACHE BOOL "ON")\n;' CMakeLists.txt
     sed -i '2s;^;set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON CACHE BOOL "ON")\n;' third_party/triton/CMakeLists.txt
     sed -i '2s;^;set(CMAKE_VERBOSE_MAKEFILE ON CACHE BOOL "ON")\n;' third_party/triton/CMakeLists.txt
-    # sed -i '2s;^;set(CMAKE_CXX_FLAGS_RELEASE "-L${rocm-merged-llvm.llvm-src}/clang/test/Driver/Inputs/CUDA-new/usr/local/cuda/")\n;' third_party/triton/CMakeLists.txt      
     substituteInPlace third_party/triton/python/setup.py \
       --replace-fail "from distutils.command.clean import clean" "import setuptools;from distutils.command.clean import clean" \
       --replace-fail 'system == "Linux"' 'False'

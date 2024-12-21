@@ -11,6 +11,8 @@
 , python3Packages
 , libffi
 , emptyDirectory
+, cudaPackages
+, triton-llvm
 }:
 
 lib.makeScope newScope (self:
@@ -119,7 +121,7 @@ with self; {
   };
 
   aotriton = callPackage ./aotriton {
-    inherit (llvm) clang-sysrooted openmp rocm-merged-llvm;
+    inherit (llvm) clang-sysrooted openmp;
     stdenv = llvm.rocmClangStdenv;
   };
 
@@ -301,7 +303,7 @@ with self; {
     {
       name = "miopengemm-bodged-for-pytorch";
       paths = [
-        self.composable_kernel
+        # self.composable_kernel
         self.hipblas-common
       ];
     };
@@ -319,6 +321,10 @@ with self; {
 
   # FIXME: we have compressed code objects now, may be able to skip two stages?
   composable_kernel = callPackage ./composable_kernel/unpack.nix { };
+  ck4inductor = pyPackages.callPackage ./composable_kernel/ck4inductor.nix {
+    inherit (llvm) rocm-merged-llvm;
+    inherit composable_kernel_build;
+  };
 
   half = callPackage ./half {
     inherit rocmUpdateScript rocm-cmake;
@@ -409,6 +415,68 @@ with self; {
     useOpenCL = false;
     useCPU = true;
   };
+
+  triton-llvm = builtins.trace "FIXME: triton-rocm needs ANOTHER different LLVM build" triton-llvm.overrideAttrs {
+    src = fetchFromGitHub {
+      owner = "llvm";
+      repo = "llvm-project";
+      # make sure this matches triton llvm rel branch hash for now
+      # https://github.com/triton-lang/triton/blob/release/3.2.x/cmake/llvm-hash.txt
+      rev = "b5cc222d7429fe6f18c787f633d5262fac2e676f";
+      hash = "sha256-iH5OBwtmJLHao2PhxKT8w+vGlFE0D2R/ry8j9nZs+TQ=";
+    };
+    patches = [ ]; # FIXME: https://github.com/llvm/llvm-project//commit/84837e3cc1cf17ed71580e3ea38299ed2bfaa5f6.patch doesn't apply, may need to rebase
+  };
+
+  triton = (pyPackages.triton-no-cuda.override (_old: {
+    rocmPackages = self;
+    rocmSupport = true;
+    # buildPythonPackage = x: old.buildPythonPackage (x // { stdenv = llvmPackagesRocm.rocmClangStdenv;});
+    stdenv = self.llvm.rocmClangStdenv;
+    llvm = self.triton-llvm;
+  })).overridePythonAttrs (old: {
+
+    stdenv = self.llvm.rocmClangStdenv;
+    version = "3.2.0";
+    src = fetchFromGitHub {
+      owner = "triton-lang";
+      repo = "triton";
+      rev = "release/3.2.x";
+      hash = "sha256-cC2eARYcmZqLrzwlmMi92xkEqpGMn2d9IndZQBoGE7Q=";
+    };
+    buildInputs = old.buildInputs ++ [
+      self.clr
+    ];
+    dontStrip = true;
+    env = old.env // {
+      CXXFLAGS = "-gz -g1 -O3 -I${self.clr}/include -I/build/source/third_party/triton/third_party/nvidia/backend/include -I${cudaPackages.cudatoolkit}/include";
+    };
+    # TRITON_BUILD_PROTON = "OFF"; # disable profiler, instead of --replace-fail 'packages += ["triton/profiler"]' ""\
+    patches = [ ];
+    postPatch = ''
+      # Need an empty cuda.h to happily compile for ROCm
+      echo "" > third_party/nvidia/include/cuda.h
+
+      mkdir third_party/nvidia/backend/include/
+      cp ${cudaPackages.cudatoolkit}/include/*.h third_party/nvidia/backend/include/
+      find . -type f -exec sed -i 's|[<]cupti.h[>]|"cupti.h"|g' {} +
+      find . -type f -exec sed -i 's|[<]cuda.h[>]|"cuda.h"|g' {} +
+
+      # remove any downloads
+      substituteInPlace python/setup.py \
+        --replace-fail "[get_json_package_info()]" "[]"\
+        --replace-fail "[get_llvm_package_info()]" "[]"\
+        --replace-fail "curr_version != version" "False"
+
+      # Don't fetch googletest
+      substituteInPlace cmake/AddTritonUnitTest.cmake \
+        --replace-fail 'include(''${PROJECT_SOURCE_DIR}/unittest/googletest.cmake)' "" \
+        --replace-fail "include(GoogleTest)" "find_package(GTest REQUIRED)"
+
+      substituteInPlace third_party/amd/backend/compiler.py \
+        --replace-fail '"/opt/rocm/llvm/bin/ld.lld"' "os.environ['ROCM_PATH']"' + "/llvm/bin/ld.lld"'
+    '';
+  });
 
   ## Meta ##
   # Emulate common ROCm meta layout

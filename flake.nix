@@ -23,17 +23,6 @@
                   #rocmPackages_5 = rocm;
                 }).overrideAttrs (old: {
                   buildInputs = old.buildInputs ++ [ rocm.hipblas-common ];
-                  #                   src = f.fetchFromGitHub {
-                  #   owner = "icl-utk-edu";
-                  #   repo = "magma";
-                  #   rev = "v2.8.0";
-                  #   hash = "sha256-0ZWB60Yz5I8QJUFoRNhrPhBecfqcY3jCtB5XCtcppik=";
-                  # };
-                  # src = builtins.fetchurl {
-                  #   url = "https://icl.utk.edu/projectsfiles/magma/downloads/magma-2.8.0.tar.gz";
-                  #   sha256 = "0j23rj17qjjm8cdw346cjd8mx1ycl9yj85dn95zyagvla19ygrgl";
-                  # };
-                  # version = "2.8.0";
                   postPatch = (old.postPatch or "") + ''
                     substituteInPlace CMakeLists.txt \
                       --replace-fail  "700;701;702;703;704;705;801;802;803;805;810;900;902;904;906;908;909;90c;1010;1011;1012;1030;1031;1032;1033" \
@@ -45,9 +34,7 @@
                     "-DGPU_TARGET=gfx908;gfx90a;gfx942;gfx1030;gfx1100"
                     "-DAMDGPU_TARGETS=gfx908;gfx90a;gfx942;gfx1030;gfx1100"
                     "-Wno-dev"
-                    # (f.lib.cmakeFeature "CMAKE_CXX_FLAGS" "-I${rocm.hipblas-common}/include")
                     "-DCMAKE_VERBOSE_MAKEFILE=ON"
-                    # "-DCMAKE_CXX_COMPILER=clang++"
                   ];
                 });
               })
@@ -162,6 +149,7 @@
 
           legacyPackages = self.packages // {
             inherit (pkgs) rocmPackages;
+            llvmPackages = pkgs.llvmPackages_18;
             rocmPackages_6 = pkgs.lib.recurseIntoAttrs pkgs.rocmPackages_6;
           };
 

@@ -37,7 +37,7 @@ let
   py = python3.withPackages (ps: [ ps.pyyaml ps.setuptools ps.packaging ]);
   gpuTargets' = lib.concatStringsSep ";" gpuTargets;
   compiler = "hipcc"; # FIXME: amdclang++ in future
-  cFlags = "-I${msgpack}/include"; # FIXME: cmake files need patched to include this properly
+  cFlags = "-O3 -I${msgpack}/include"; # FIXME: cmake files need patched to include this properly
 in
 {
   # build will fail with llvm libcxx, must use gnu libstdcxx
@@ -52,6 +52,8 @@ in
     hash = "sha256-TTxjFQE53PcDA3Yw31h9j2nXpuB1OnHLOPX+d6K2MS8=";
   };
   env.CXX = compiler;
+  env.CFLAGS = cFlags;
+  env.CXXFLAGS = cFlags;
   env.ROCM_PATH = "${clr}";
   env.TENSILE_ROCM_ASSEMBLER_PATH = "${clang-sysrooted}/bin/clang++";
   env.NIX_CC_USE_RESPONSE_FILE = 0;
@@ -94,8 +96,6 @@ in
       substituteInPlace library/src/amd_detail/rocblaslt/src/kernels/compile_code_object.sh \
         --replace-fail '${"\${rocm_path}"}/bin/' ""
     fi
-    echo $CFLAGS
-    echo $CXXFLAGS
   '';
 
   doCheck = false;
@@ -106,19 +106,17 @@ in
     rocm-cmake
     py
     clr
-    #git
     gfortran
-    #ninja
+    # need make to get streaming console output so nix knows build is still running
+    # so deliberately not using ninja
+    # ninja
     (writeShellScriptBin "amdclang++" ''
       exec clang++ "$@"
     '')
   ];
 
   buildInputs = [
-    # rocblas
-    # rocsolver
     hipblas-common
-    # hipblas
     tensile'
     openmp
     libffi
@@ -128,34 +126,22 @@ in
     msgpack # FIXME: not included in cmake!
     libxml2
     python3Packages.msgpack
+    python3Packages.joblib
     zlib
     zstd
-    #python3Packages.joblib
   ] ++ lib.optionals buildTests [
     gtest
   ] ++ lib.optionals (buildTests || buildBenchmarks) [
     lapack-reference
   ];
 
-  preConfigure = ''
-    cmakeFlagsArray+=(
-      '-DCMAKE_C_FLAGS_RELEASE=${cFlags}'
-      '-DCMAKE_CXX_FLAGS_RELEASE=${cFlags}'
-    )
-  '';
-
   cmakeFlags = [
-    #"--debug"
-    #"--trace"
     "-Wno-dev"
     "-DCMAKE_BUILD_TYPE=Release"
     "-DCMAKE_VERBOSE_MAKEFILE=ON"
-    # "-DCMAKE_CXX_COMPILER=hipcc" # MUST be set because tensile uses this
-    # "-DCMAKE_C_COMPILER=${lib.getBin clr}/bin/hipcc"
     "-DVIRTUALENV_PYTHON_EXENAME=${lib.getExe py}"
     "-DTENSILE_USE_HIP=ON"
     "-DTENSILE_BUILD_CLIENT=OFF"
-    # "-DTENSILE_USE_LLVM=ON"
     "-DTENSILE_USE_FLOAT16_BUILTIN=ON"
     "-DCMAKE_CXX_COMPILER=${compiler}"
     # Manually define CMAKE_INSTALL_<DIR>
@@ -167,10 +153,9 @@ in
     # FIXME what are the implications of hardcoding this?
     "-DTensile_CODE_OBJECT_VERSION=V5"
     "-DTensile_COMPILER=${compiler}" # amdclang++ in future
-    # "-DSUPPORTED_TARGETS=${gpuTargets'}"
     "-DAMDGPU_TARGETS=${gpuTargets'}"
+    "-DGPU_TARGETS=${gpuTargets'}"
     "-DTensile_LIBRARY_FORMAT=msgpack"
-    # "-DGPU_TARGETS=${gpuTargets'}"
   ] ++ lib.optionals buildTests [
     "-DBUILD_CLIENTS_TESTS=ON"
   ] ++ lib.optionals buildBenchmarks [

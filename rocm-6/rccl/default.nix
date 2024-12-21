@@ -25,7 +25,8 @@ let
       exec clang++ "$@"
     '';
   useAsan = false;
-  san = "-fsanitize=undefined " + (lib.optionalString useAsan "-fsanitize=address -shared-libsan ");
+  useUbsan = false;
+  san = lib.optionalString (useAsan || useUbsan) ("-fno-gpu-sanitize -fsanitize=undefined " + (lib.optionalString useAsan "-fsanitize=address -shared-libsan "));
 in
 # FIXME: infiniband support relies on:
   # * kfd_peerdirect support which is on out-of-tree amdkfd in ROCm/ROCK-Kernel-Driver
@@ -97,19 +98,15 @@ stdenv.mkDerivation (finalAttrs: {
   ];
   makeFlags = [ "-l32" ];
 
-  # -O1 -fno-strict-aliasing
-  env.CFLAGS = "-I${clr}/include -g1 ${san}-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -DROCM_VERSION=60300";
-  env.CXXFLAGS = "-I${clr}/include -g1 ${san}-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -DROCM_VERSION=60300";
-  env.LDFLAGS = "${san}";
-  env.CCC_OVERRIDE_OPTIONS = "+-parallel-jobs=6";
+  env.CFLAGS = "-I${clr}/include -parallel-jobs=6 -O3 -DNDEBUG -g1 ${san}-fno-omit-frame-pointer -momit-leaf-frame-pointer -DROCM_VERSION=60300";
+  env.CXXFLAGS = "-I${clr}/include -parallel-jobs=6 -O3 -DNDEBUG -g1 ${san}-fno-omit-frame-pointer -momit-leaf-frame-pointer -DROCM_VERSION=60300";
+  env.LDFLAGS = "-parallel-jobs=6 ${san}";
   postPatch = ''
     patchShebangs src tools
 
     # Really strange behavior, `#!/usr/bin/env perl` should work...
     substituteInPlace CMakeLists.txt \
-      --replace "\''$ \''${hipify-perl_executable}" "${perl}/bin/perl ${hipify}/bin/hipify-perl" \
-       --replace-fail 'target_link_options(rccl PRIVATE -parallel-jobs=' "#" \
-       --replace-fail 'target_compile_options(rccl PRIVATE -parallel-jobs=12)' ""
+      --replace "\''$ \''${hipify-perl_executable}" "${perl}/bin/perl ${hipify}/bin/hipify-perl"
   '';
 
   postInstall = lib.optionalString useAsan ''

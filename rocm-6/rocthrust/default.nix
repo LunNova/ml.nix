@@ -14,7 +14,7 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocthrust";
-  version = "6.2.2";
+  version = "6.3.0";
 
   outputs = [
     "out"
@@ -28,7 +28,7 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "rocThrust";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-vPU+S+1ItMPWiDOvmT9lvcw9D3xM7zZcerEo1cguAiE=";
+    hash = "sha256-c1+hqP/LipaQ2/lPJo79YBd9H0n0Y7yHkxe0/INE14s=";
   };
 
   nativeBuildInputs = [
@@ -55,8 +55,6 @@ stdenv.mkDerivation (finalAttrs: {
     "-DBUILD_TEST=ON"
   ] ++ lib.optionals buildBenchmarks [
     "-DBUILD_BENCHMARKS=ON"
-  ] ++ lib.optionals (buildTests || buildBenchmarks) [
-    "-DCMAKE_CXX_FLAGS=-Wno-deprecated-builtins" # Too much spam
   ];
 
   postInstall = lib.optionalString buildTests ''

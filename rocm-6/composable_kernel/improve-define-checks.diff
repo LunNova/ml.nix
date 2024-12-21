@@ -1,0 +1,181 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index be4efd3d..16b80aa0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -180,6 +180,9 @@ rocm_check_target_ids(SUPPORTED_GPU_TARGETS
+ 
+ message("Building CK for the following targets: ${SUPPORTED_GPU_TARGETS}")
+ 
++# set(CMAKE_C_COMPILE_OPTIONS_CREATE_PCH -Xclang -emit-pch -Xclang -include -Xclang <PCH_HEADER>)
++# set(CMAKE_CXX_COMPILE_OPTIONS_CREATE_PCH -Xclang -emit-pch -Xclang -include -Xclang <PCH_HEADER>)
++
+ if (SUPPORTED_GPU_TARGETS MATCHES "gfx9")
+     message("Enabling XDL instances")
+     add_definitions(-DCK_USE_XDL)
+diff --git a/include/ck/pch.hpp b/include/ck/pch.hpp
+new file mode 100644
+index 00000000..efcfc808
+--- /dev/null
++++ b/include/ck/pch.hpp
+@@ -0,0 +1,9 @@
++#pragma once
++
++#include <numeric>
++#include <cstdlib>
++#include <iostream>
++#include <initializer_list>
++#include <vector>
++
++// #include "ck/utility/common_header.hpp"
+diff --git a/include/ck/tensor_operation/gpu/grid/gridwise_gemm_dpp.hpp b/include/ck/tensor_operation/gpu/grid/gridwise_gemm_dpp.hpp
+index b473d7cb..c004e1aa 100644
+--- a/include/ck/tensor_operation/gpu/grid/gridwise_gemm_dpp.hpp
++++ b/include/ck/tensor_operation/gpu/grid/gridwise_gemm_dpp.hpp
+@@ -28,7 +28,7 @@ __global__ void
+ #endif
+         kernel_gemm_dpp(const typename GridwiseGemm::Argument karg)
+ {
+-#if(!defined(__HIP_DEVICE_COMPILE__) || defined(__gfx103__) || defined(__gfx11__))
++#if((!defined(__HIP_DEVICE_COMPILE__) && !defined(__AMDGCN__) && !defined(__AMD__)) || defined(__gfx103__) || defined(__gfx11__))
+     __shared__ char p_shared[GridwiseGemm::GetSharedMemoryNumberOfByte()];
+ 
+     const auto a_grid_desc_ak0_m_ak1 = amd_wave_read_first_lane(
+diff --git a/include/ck/utility/common_header.hpp b/include/ck/utility/common_header.hpp
+index f95660a8..17f89855 100644
+--- a/include/ck/utility/common_header.hpp
++++ b/include/ck/utility/common_header.hpp
+@@ -3,6 +3,14 @@
+ 
+ #pragma once
+ 
++#ifndef CK_COMMON_HEADER_HPP_INCLUDED
++#define CK_COMMON_HEADER_HPP_INCLUDED
++
++// Workaround: __HIP_DEVICE_COMPILE__ isn't set, not sure why
++#if defined(__AMDGPU__) && !defined(__HIP_DEVICE_COMPILE__)
++#define __HIP_DEVICE_COMPILE__ 1
++#endif
++
+ #include "ck/ck.hpp"
+ #include "ck/utility/array.hpp"
+ #include "ck/utility/container_helper.hpp"
+@@ -51,3 +59,5 @@
+ #ifdef CK_USE_AMD_MFMA
+ #include "ck/utility/amd_xdlops.hpp"
+ #endif
++
++#endif
+\ No newline at end of file
+diff --git a/library/src/tensor_operation_instance/gpu/CMakeLists.txt b/library/src/tensor_operation_instance/gpu/CMakeLists.txt
+index dd023e6b..789e0072 100644
+--- a/library/src/tensor_operation_instance/gpu/CMakeLists.txt
++++ b/library/src/tensor_operation_instance/gpu/CMakeLists.txt
+@@ -120,9 +120,9 @@ function(add_instance_library INSTANCE_NAME)
+             endif()
+             set(offload_targets)
+             foreach(target IN LISTS INST_TARGETS)
+-                    string(APPEND offload_targets "--offload-arch=${target} ")
++                    list(APPEND offload_targets --offload-arch=${target})
+             endforeach()
+-            set_source_files_properties(${source} PROPERTIES COMPILE_FLAGS ${offload_targets})
++            #set_source_files_properties(${source} PROPERTIES COMPILE_FLAGS ${offload_targets})
+             list(APPEND INST_OBJ ${source})
+         endforeach()
+         add_library(${INSTANCE_NAME} OBJECT ${INST_OBJ})
+@@ -150,7 +150,16 @@ function(add_instance_library INSTANCE_NAME)
+             #message("Adding --offload-compress flag for ${INSTANCE_NAME}")
+             target_compile_options(${INSTANCE_NAME} PRIVATE --offload-compress)
+         endif()
++        # target_compile_options(${INSTANCE_NAME} PRIVATE
++        # "SHELL:-Xclang -triple -Xclang amdgcn-amd-amdhsa" "SHELL:-Xclang -aux-triple -Xclang x86_64-unknown-linux-gnu" -x hip-cpp-output ${offload_targets})
+ 
++        # set(__pch_header_CXX "hip-header")
++        # set(CMAKE_CXX_COMPILE_OPTIONS_CREATE_PCH -Xclang -emit-pch -Xclang -include -Xclang <PCH_HEADER>)
++        # #
++
++        target_precompile_headers(${INSTANCE_NAME} PRIVATE 
++        "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/include/ck/pch.hpp>"
++        )
+         set_target_properties(${INSTANCE_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+         clang_tidy_check(${INSTANCE_NAME})
+         set(result 0)
+diff --git a/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_kn_mn_instance.cpp b/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_kn_mn_instance.cpp
+index 2afa28a4..d34f525b 100644
+--- a/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_kn_mn_instance.cpp
++++ b/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_kn_mn_instance.cpp
+@@ -29,6 +29,7 @@ static constexpr auto GemmDefault = ck::tensor_operation::device::GemmSpecializa
+ // Compilation parameters for a[m, k] * b[k, n] = c[m, n]
+ // clang-format off
+ using device_gemm_dpp_f16_f16_f16_mk_kn_mn_instances = std::tuple<
++#if((!defined(__HIP_DEVICE_COMPILE__) && !defined(__AMDGPU__) && !defined(__AMDGCN__)) || defined(__gfx103__) || defined(__gfx11__))
+     // ########| AData| BData| CData| AccData| ALayout| BLayout| CLayout|           A|           B|           C|           GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1| MPer| NPer|    MDpp|    NDpp|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds| CThreadTransfer| CThreadTransfer|
+     // ########|  Type|  Type|  Type|    Type|        |        |        | Elementwise| Elementwise| Elementwise| Specialization|  Size| Block| Block| Block|    |    |  Dpp|  Dpp| PerWave| PerWave|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| SrcDstVectorDim|       DstScalar|
+     // ########|      |      |      |        |        |        |        |   Operation|   Operation|   Operation|               |      |      |      |      |    |    |     |     |        |        | Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |                |       PerVector|
+@@ -50,6 +51,7 @@ using device_gemm_dpp_f16_f16_f16_mk_kn_mn_instances = std::tuple<
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Row,     Row, PassThrough, PassThrough, PassThrough,    GemmDefault,    32,     8,    16,    32,   8,   4,    8,   16,       1,       1,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,      S<4, 8, 1>,     S<0, 2, 1>,     S<0, 2, 1>,             1,              2,              4,      true,               5,               1>,
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Row,     Row, PassThrough, PassThrough, PassThrough,    GemmDefault,    32,     4,    32,    32,   8,   4,    4,   32,       1,       1,      S<4, 4, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,     S<2, 16, 1>,     S<0, 2, 1>,     S<0, 2, 1>,             1,              2,              4,      true,               5,               1>,
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Row,     Row, PassThrough, PassThrough, PassThrough,    GemmDefault,    32,     2,    16,    32,   8,   4,    2,   16,       1,       1,      S<4, 2, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,     S<2, 16, 1>,     S<0, 2, 1>,     S<0, 2, 1>,             1,              1,              4,      true,               5,               1>
++#endif
+     >;
+ // clang-format on
+ 
+diff --git a/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_kn_mn_irregular_instance.cpp b/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_kn_mn_irregular_instance.cpp
+index 508b2e8d..856174cc 100644
+--- a/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_kn_mn_irregular_instance.cpp
++++ b/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_kn_mn_irregular_instance.cpp
+@@ -29,6 +29,7 @@ static constexpr auto MNPadding = ck::tensor_operation::device::GemmSpecializati
+ // Compilation parameters for a[m, k] * b[k, n] = c[m, n]
+ // clang-format off
+ using device_gemm_dpp_f16_f16_f16_mk_kn_mn_irregular_instances = std::tuple<
++#if((!defined(__HIP_DEVICE_COMPILE__) && !defined(__AMDGPU__) && !defined(__AMDGCN__)) || defined(__gfx103__) || defined(__gfx11__))
+     // ########| AData| BData| CData| AccData| ALayout| BLayout| CLayout|           A|           B|           C|           GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1| MPer| NPer|    MDpp|    NDpp|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds| CThreadTransfer| CThreadTransfer|
+     // ########|  Type|  Type|  Type|    Type|        |        |        | Elementwise| Elementwise| Elementwise| Specialization|  Size| Block| Block| Block|    |    |  Dpp|  Dpp| PerWave| PerWave|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| SrcDstVectorDim|       DstScalar|
+     // ########|      |      |      |        |        |        |        |   Operation|   Operation|   Operation|               |      |      |      |      |    |    |     |     |        |        | Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |                |       PerVector|
+@@ -45,6 +46,7 @@ using device_gemm_dpp_f16_f16_f16_mk_kn_mn_irregular_instances = std::tuple<
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Row,     Row, PassThrough, PassThrough, PassThrough,      MNPadding,    32,    32,    16,    64,   8,   4,   16,   16,       2,       1,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,      S<4, 8, 1>,     S<0, 2, 1>,     S<0, 2, 1>,             1,              2,              4,      true,               5,               1>,
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Row,     Row, PassThrough, PassThrough, PassThrough,      MNPadding,    32,     8,    16,    64,   8,   4,    4,   16,       2,       1,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,      S<4, 8, 1>,     S<0, 2, 1>,     S<0, 2, 1>,             1,              2,              4,      true,               5,               1>,
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Row,     Row, PassThrough, PassThrough, PassThrough,      MNPadding,    32,     1,    32,    64,   8,   4,    1,   32,       1,       1,      S<4, 1, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,      S<4, 8, 1>,     S<0, 2, 1>,     S<0, 2, 1>,             1,              4,              4,      true,               5,               1>
++#endif
+     >;
+ // clang-format on
+ 
+diff --git a/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_nk_mn_instance.cpp b/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_nk_mn_instance.cpp
+index 242ff07c..6d312d02 100644
+--- a/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_nk_mn_instance.cpp
++++ b/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_nk_mn_instance.cpp
+@@ -30,6 +30,7 @@ static constexpr auto GemmDefault = ck::tensor_operation::device::GemmSpecializa
+ // Compilation parameters for a[m, k] * b[n, k] = c[m, n]
+ // clang-format off
+ using device_gemm_dpp_f16_f16_f16_mk_nk_mn_instances = std::tuple<
++#if((!defined(__HIP_DEVICE_COMPILE__) && !defined(__AMDGPU__) && !defined(__AMDGCN__)) || defined(__gfx103__) || defined(__gfx11__))
+     // ########| AData| BData| CData| AccData| ALayout| BLayout| CLayout|           A|           B|           C|           GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1| MPer| NPer|    MDpp|    NDpp|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds| CThreadTransfer| CThreadTransfer|
+     // ########|  Type|  Type|  Type|    Type|        |        |        | Elementwise| Elementwise| Elementwise| Specialization|  Size| Block| Block| Block|    |    |  Dpp|  Dpp| PerWave| PerWave|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| SrcDstVectorDim|       DstScalar|
+     // ########|      |      |      |        |        |        |        |   Operation|   Operation|   Operation|               |      |      |      |      |    |    |     |     |        |        | Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |                |       PerVector|
+@@ -51,6 +52,7 @@ using device_gemm_dpp_f16_f16_f16_mk_nk_mn_instances = std::tuple<
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Col,     Row, PassThrough, PassThrough, PassThrough,    GemmDefault,    32,     8,    16,    32,   8,   8,    8,   16,       1,       1,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,             2,              8,              8,      true,               5,               1>,
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Col,     Row, PassThrough, PassThrough, PassThrough,    GemmDefault,    32,     4,    32,    32,   8,   8,    4,   32,       1,       1,      S<4, 4, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,     S<2, 16, 1>,     S<1, 0, 2>,     S<1, 0, 2>,             2,              8,              8,      true,               5,               1>,
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Col,     Row, PassThrough, PassThrough, PassThrough,    GemmDefault,    32,     2,    16,    32,   8,   8,    2,   16,       1,       1,      S<4, 2, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,     S<2, 16, 1>,     S<1, 0, 2>,     S<1, 0, 2>,             2,              8,              8,      true,               5,               1>
++#endif
+     >;
+ // clang-format on
+ 
+diff --git a/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_nk_mn_irregular_instance.cpp b/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_nk_mn_irregular_instance.cpp
+index 241fd40b..7e66890c 100644
+--- a/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_nk_mn_irregular_instance.cpp
++++ b/library/src/tensor_operation_instance/gpu/gemm/device_gemm_dpp_f16_f16_f16_mk_nk_mn_irregular_instance.cpp
+@@ -30,6 +30,7 @@ static constexpr auto MNPadding = ck::tensor_operation::device::GemmSpecializati
+ // Compilation parameters for a[m, k] * b[n, k] = c[m, n]
+ // clang-format off
+ using device_gemm_dpp_f16_f16_f16_mk_nk_mn_irregular_instances = std::tuple<
++#if((!defined(__HIP_DEVICE_COMPILE__) && !defined(__AMDGPU__) && !defined(__AMDGCN__)) || defined(__gfx103__) || defined(__gfx11__))
+     // ########| AData| BData| CData| AccData| ALayout| BLayout| CLayout|           A|           B|           C|           GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1| MPer| NPer|    MDpp|    NDpp|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds| CThreadTransfer| CThreadTransfer|
+     // ########|  Type|  Type|  Type|    Type|        |        |        | Elementwise| Elementwise| Elementwise| Specialization|  Size| Block| Block| Block|    |    |  Dpp|  Dpp| PerWave| PerWave|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| SrcDstVectorDim|       DstScalar|
+     // ########|      |      |      |        |        |        |        |   Operation|   Operation|   Operation|               |      |      |      |      |    |    |     |     |        |        | Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |                |       PerVector|
+@@ -46,6 +47,7 @@ using device_gemm_dpp_f16_f16_f16_mk_nk_mn_irregular_instances = std::tuple<
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Col,     Row, PassThrough, PassThrough, PassThrough,      MNPadding,    32,    32,    16,    64,   8,   8,   16,   16,       2,       1,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,             2,              8,              8,      true,               5,               1>,
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Col,     Row, PassThrough, PassThrough, PassThrough,      MNPadding,    32,     8,    16,    32,   8,   8,    8,   16,       1,       1,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,             2,              8,              8,      true,               5,               1>,
+     DeviceGemmDpp< F16,   F16,   F16,     F32,     Row,     Col,     Row, PassThrough, PassThrough, PassThrough,      MNPadding,    32,     1,    32,    64,   8,   8,    1,   32,       1,       1,      S<4, 1, 1>,     S<1, 0, 2>,     S<1, 0, 2>,              2,              8,              8,      true,      S<4, 8, 1>,     S<1, 0, 2>,     S<1, 0, 2>,             2,              8,              8,      true,               5,               1>
++#endif
+     >;
+ // clang-format on
+ 

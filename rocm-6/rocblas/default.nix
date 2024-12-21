@@ -104,7 +104,8 @@ stdenv.mkDerivation (finalAttrs: {
 
   dontStrip = true;
   env.CFLAGS = "-g1 -gz";
-  env.CXXFLAGS = "-g1 -gz";
+  env.CXXFLAGS = "-O3 -DNDEBUG -g1 -gz -I${hipblas-common}/include" +
+    lib.optionalString (buildTests || buildBenchmarks) " -I${amd-blis}/include/blis";
   env.NIX_DISABLE_WRAPPER_INCLUDES = 1;
   env.TENSILE_ROCM_ASSEMBLER_PATH = "${clang-sysrooted}/bin/clang++";
 
@@ -114,7 +115,6 @@ stdenv.mkDerivation (finalAttrs: {
     #"--debug-output"
     # "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON"
     "-DCMAKE_VERBOSE_MAKEFILE=ON"
-    (lib.cmakeFeature "CMAKE_CXX_FLAGS" "-I${hipblas-common}/include") # FIX: -I${amd-blis}/include/blis 
     (lib.cmakeFeature "CMAKE_EXECUTE_PROCESS_COMMAND_ECHO" "STDERR")
     # This may change to using clang directly in future releases
     # (lib.cmakeFeature "CMAKE_C_COMPILER" "hipcc")
@@ -157,8 +157,6 @@ stdenv.mkDerivation (finalAttrs: {
     #(lib.cmakeBool "Tensile_PRINT_DEBUG" true)
     #"-DTENSILE_GPU_ARCHS=gfx908"
     #"-DTensile_VERBOSE=2"
-  ] ++ lib.optionals (buildTests || buildBenchmarks) [
-    (lib.cmakeFeature "CMAKE_CXX_FLAGS" "-I${amd-blis}/include/blis")
   ];
 
   preConfigure = ''

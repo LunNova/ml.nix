@@ -11,7 +11,7 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocr-debug-agent";
-  version = "6.2.2";
+  version = "6.3.0";
 
   src = fetchFromGitHub {
     owner = "ROCm";

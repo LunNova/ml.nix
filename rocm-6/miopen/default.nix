@@ -33,12 +33,15 @@
 , rocm-comgr
 , roctracer
 , python3Packages
+  # FIXME: should be able to use all clr targets
+, gpuTargets ? [ "gfx908" "gfx90a" "gfx942" ] # clr.gpuTargets
 , buildDocs ? false # Needs internet because of rocm-docs-core
 , buildTests ? false
 }:
 
 let
-  cFlags = "--offload-compress -I${roctracer}/include -I${nlohmann_json}/include -I${sqlite.dev}/include"; # FIXME: cmake files need patched to include this properly
+  # FIXME: cmake files need patched to include this properly
+  cFlags = "-O3 -DCK_FP8_CVT_FAST_PATH -DNDEBUG -Wno-documentation-pedantic --offload-compress -I${hipblas-common}/include  -I${hipblas}/include -I${roctracer}/include -I${nlohmann_json}/include -I${sqlite.dev}/include -I${rocrand}/include";
   version = "6.3.0";
 
   src = fetchFromGitHub {
@@ -49,7 +52,7 @@ let
     fetchLFS = true;
     fetchSubmodules = true;
 
-    # WORKAROUND: .lfsconfig is set to exclude everything
+    # WORKAROUND: .lfsconfig is incorrectly set to exclude everything upstream
     leaveDotGit = true;
     postFetch = ''
       export HOME=$(mktemp -d)
@@ -108,12 +111,11 @@ stdenv.mkDerivation (finalAttrs: {
   inherit version src;
   pname = "miopen";
 
+  env.CFLAGS = cFlags;
+  env.CXXFLAGS = cFlags;
+
   preConfigure = ''
-    cmakeFlagsArray+=(
-      '-DCMAKE_C_FLAGS_RELEASE=${cFlags}'
-      '-DCMAKE_CXX_FLAGS_RELEASE=${cFlags}'
-    )
-    makeFlagsArray+=("-l$((NIX_BUILD_CORES / 2))")
+    makeFlagsArray+=("-l$(nproc)")
   '';
   # Find zstd and add to target. Mainly for torch.
   patches = [
@@ -181,20 +183,20 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   cmakeFlags = [
-    "-DAMDGPU_TARGETS=${lib.concatStringsSep ";" clr.gpuTargets}"
-    "-DGPU_TARGETS=${lib.concatStringsSep ";" clr.gpuTargets}"
-    "-DGPU_ARCHS=${lib.concatStringsSep ";" clr.gpuTargets}"
+    "-DAMDGPU_TARGETS=${lib.concatStringsSep ";" gpuTargets}"
+    "-DGPU_TARGETS=${lib.concatStringsSep ";" gpuTargets}"
+    "-DGPU_ARCHS=${lib.concatStringsSep ";" gpuTargets}"
     "-DMIOPEN_USE_SQLITE_PERFDB=ON"
     "-DCMAKE_VERBOSE_MAKEFILE=ON"
     "-DCMAKE_MODULE_PATH=${clr}/hip/cmake"
     "-DCMAKE_BUILD_TYPE=Release"
-    "-DCMAKE_CXX_FLAGS=-Wno-#warnings" # <half> -> <half/half.hpp>
 
-    "-DUNZIPPER=${bzip2}/bin/bzcat" # needs to stream to stdout so bzcat not bunzip2
+    # needs to stream to stdout so bzcat rather than bunzip2
+    "-DUNZIPPER=${bzip2}/bin/bzcat"
 
     # isnan not defined for float error, probably still needs hipcc? should try without hipcc again next bump
-    # "-DCMAKE_C_COMPILER=hipcc"
-    # "-DCMAKE_CXX_COMPILER=hipcc"
+    "-DCMAKE_C_COMPILER=hipcc"
+    "-DCMAKE_CXX_COMPILER=hipcc"
     "-DROCM_PATH=${clr}"
     "-DHIP_ROOT_DIR=${clr}"
     (lib.cmakeBool "MIOPEN_USE_ROCBLAS" true)
@@ -215,6 +217,14 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   postPatch = ''
+    echo "HACK: disabling clang-tidy"
+    substituteInPlace cmake/ClangTidy.cmake \
+      --replace-fail 'macro(enable_clang_tidy)' 'macro(enable_clang_tidy)
+      endmacro()
+      macro(enable_clang_tidy_unused)' \
+      --replace-fail 'function(clang_tidy_check TARGET)' 'function(clang_tidy_check TARGET)
+      return()'
+
     patchShebangs test src/composable_kernel fin utils install_deps.cmake
 
       #--replace "unpack_db(\"\''${CMAKE_SOURCE_DIR}/src/kernels/\''${FILE_NAME}.kdb.bz2\")" "" \

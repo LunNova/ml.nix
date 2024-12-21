@@ -18,7 +18,7 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocwmma";
-  version = "6.2.2";
+  version = "6.3.0";
 
   outputs = [
     "out"
@@ -34,7 +34,7 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "rocWMMA";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-NQt0tRkiDDqEWa+xst2jTvPYb5perLmLiR+Bh2eDvkk=";
+    hash = "sha256-kih3hn6QhcMmyj9n8f8eO+RIgKQgWKIuzg8fb0eoRPE=";
   };
 
   patches = lib.optionals (buildTests || buildBenchmarks) [
@@ -56,6 +56,9 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   cmakeFlags = [
+    "-DOpenMP_C_INCLUDE_DIR=${openmp.dev}/include"
+    "-DOpenMP_CXX_INCLUDE_DIR=${openmp.dev}/include"
+    "-DOpenMP_omp_LIBRARY=${openmp}/lib"
     "-DROCWMMA_BUILD_TESTS=${if buildTests || buildBenchmarks then "ON" else "OFF"}"
     "-DROCWMMA_BUILD_SAMPLES=${if buildSamples then "ON" else "OFF"}"
     # Manually define CMAKE_INSTALL_<DIR>

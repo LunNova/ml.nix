@@ -33,6 +33,7 @@ stdenv.mkDerivation (finalAttrs: {
     export ROCM_BUILD_ID="${finalAttrs.env.ROCM_BUILD_ID}"
   '';
 
+  passthru.ROCM_LIBPATCH_VERSION = finalAttrs.env.ROCM_LIBPATCH_VERSION;
   passthru.updateScript = rocmUpdateScript {
     name = finalAttrs.pname;
     inherit (finalAttrs.src) owner;

@@ -23,13 +23,13 @@ stdenv.mkDerivation (finalAttrs: {
     else "cpu"
   );
 
-  version = "6.2.2";
+  version = "6.3.0";
 
   src = fetchFromGitHub {
     owner = "ROCm";
     repo = "rpp";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-7/4qW+K3Y4xmu1uZDeXMKbEK1KqwN6z1ISIRkUoOVLA=";
+    hash = "sha256-METwagek17/DdZGaOTQqvyU6xGt7OBMLHk4YM4KmgtA=";
   };
 
   nativeBuildInputs = [
@@ -47,7 +47,12 @@ stdenv.mkDerivation (finalAttrs: {
     boost
   ];
 
+  CFLAGS = "-I${openmp.dev}/include";
+  CXXFLAGS = "-I${openmp.dev}/include";
   cmakeFlags = [
+    "-DOpenMP_C_INCLUDE_DIR=${openmp.dev}/include"
+    "-DOpenMP_CXX_INCLUDE_DIR=${openmp.dev}/include"
+    "-DOpenMP_omp_LIBRARY=${openmp}/lib"
     "-DROCM_PATH=${clr}"
   ] ++ lib.optionals (gpuTargets != [ ]) [
     "-DAMDGPU_TARGETS=${lib.concatStringsSep ";" gpuTargets}"

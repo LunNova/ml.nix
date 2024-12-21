@@ -10,6 +10,7 @@
 , rocrand
 , clr
 , git
+, pkg-config
 , openmp
 , openmpi
 , gtest
@@ -21,7 +22,7 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "rocalution";
-  version = "6.2.2";
+  version = "6.3.0";
 
   outputs = [
     "out"
@@ -37,7 +38,7 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "ROCm";
     repo = "rocALUTION";
     rev = "rocm-${finalAttrs.version}";
-    hash = "sha256-5CbI1uPW9FlwvsCTVAOznTqdLaEE8Ncuz4EwzwqUWmk=";
+    hash = "sha256-xdZ3HUiRGsreHfJH8RgL/s3jGyC5ABmBKcEfgtqWg8Y=";
   };
 
   nativeBuildInputs = [
@@ -45,6 +46,7 @@ stdenv.mkDerivation (finalAttrs: {
     rocm-cmake
     clr
     git
+    pkg-config
   ];
 
   buildInputs = [
@@ -58,7 +60,11 @@ stdenv.mkDerivation (finalAttrs: {
     gtest
   ];
 
+  CXXFLAGS = "-I${openmp.dev}/include";
   cmakeFlags = [
+    "-DOpenMP_C_INCLUDE_DIR=${openmp.dev}/include"
+    "-DOpenMP_CXX_INCLUDE_DIR=${openmp.dev}/include"
+    "-DOpenMP_omp_LIBRARY=${openmp}/lib"
     "-DROCM_PATH=${clr}"
     "-DHIP_ROOT_DIR=${clr}"
     "-DSUPPORT_HIP=ON"
@@ -72,6 +78,7 @@ stdenv.mkDerivation (finalAttrs: {
     "-DCMAKE_INSTALL_INCLUDEDIR=include"
   ] ++ lib.optionals (gpuTargets != [ ]) [
     "-DAMDGPU_TARGETS=${lib.strings.concatStringsSep ";" gpuTargets}"
+    "-DGPU_TARGETS=${lib.strings.concatStringsSep ";" gpuTargets}"
   ] ++ lib.optionals buildTests [
     "-DBUILD_CLIENTS_TESTS=ON"
   ] ++ lib.optionals buildBenchmarks [
